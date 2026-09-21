@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo } from 'react';
 import { Icon } from '../../components/icons';
+import { PalmMark } from '../../components/PalmMark';
 import { Tooltip } from '../../components/ui/Tooltip';
 import { getApp } from '../../core/app-manager/registry';
 import { usePinnedApps, useAppStore } from '../../core/app-manager/store';
@@ -208,7 +209,7 @@ export const Taskbar = memo(function Taskbar() {
             panel === 'start' ? 'bg-accent text-accent-fg' : 'text-ink hover:bg-white/12',
           )}
         >
-          <PalmGlyph />
+          <PalmMark size={20} />
         </button>
       </Tooltip>
 
@@ -267,41 +268,3 @@ export const Taskbar = memo(function Taskbar() {
     </div>
   );
 });
-
-/**
- * The Palm mark used on the start button.
- *
- * Drawn with filled fronds rather than strokes: at 19px a stroked outline
- * collapses into an unreadable smudge.
- */
-function PalmGlyph() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M11.2 21.5c-.1-3.6.2-6.7 1-9.3.2-.6.5-1.2.8-1.8l1.4.7c-.3.5-.5 1-.7 1.5-.7 2.4-1 5.3-.9 8.8l-1.6.1Z"
-        fill="currentColor"
-      />
-      <path
-        d="M12.6 10.4c1.6-2.3 4.2-3.3 7.3-2.7-1.3 2.1-3.4 3.2-6.2 3.3l-1.1-.6Z"
-        fill="currentColor"
-        opacity="0.95"
-      />
-      <path
-        d="M11.7 10.2C10.4 7.7 7.9 6.4 4.7 6.7c1 2.3 3 3.6 5.8 4l1.2-.5Z"
-        fill="currentColor"
-        opacity="0.8"
-      />
-      <path
-        d="M12.9 9.6c.4-2.8 2.1-4.7 5-5.6.2 2.6-1.2 4.7-3.8 6.1l-1.2-.5Z"
-        fill="currentColor"
-        opacity="0.7"
-      />
-      <path
-        d="M11.3 9.7C10.2 7.1 8.2 5.6 5.4 5.3c.4 2.6 2 4.4 4.7 5.2l1.2-.8Z"
-        fill="currentColor"
-        opacity="0.55"
-      />
-      <circle cx="12" cy="10" r="1.9" fill="currentColor" />
-    </svg>
-  );
-}

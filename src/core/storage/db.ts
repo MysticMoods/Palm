@@ -8,7 +8,7 @@
  */
 
 export const DB_NAME = 'palm-os';
-export const DB_VERSION = 1;
+export const DB_VERSION = 3;
 
 export const STORE = {
   /** Filesystem node metadata (see core/filesystem). */
@@ -17,6 +17,17 @@ export const STORE = {
   contents: 'contents',
   /** Generic namespaced key/value records: settings, desktop layout, app data. */
   kv: 'kv',
+  /**
+   * Installed web applications: one manifest per application.
+   *
+   * Metadata only. The archived bytes live in the application's own origin,
+   * which Palm OS cannot read — see core/sites.
+   */
+  apps: 'apps',
+  /** Legacy (schema 2): archived apps that shared the OS origin. */
+  sites: 'sites',
+  /** Legacy (schema 2): their resources. Read once, to migrate, then dropped. */
+  siteFiles: 'siteFiles',
 } as const;
 
 export type StoreName = (typeof STORE)[keyof typeof STORE];
@@ -33,6 +44,15 @@ export class StorageError extends Error {
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+/**
+ * Schema upgrades.
+ *
+ * Each store is created only if missing, so an existing install moves forward
+ * without losing anything. Version 2 added offline web apps; version 3 adds
+ * `apps` for applications that live on their own origin, and leaves the
+ * version 2 stores in place so what is already installed can be migrated
+ * rather than discarded (see core/sites/migrate.ts).
+ */
 function upgrade(db: IDBDatabase) {
   if (!db.objectStoreNames.contains(STORE.nodes)) {
     const nodes = db.createObjectStore(STORE.nodes, { keyPath: 'id' });
@@ -43,6 +63,17 @@ function upgrade(db: IDBDatabase) {
   }
   if (!db.objectStoreNames.contains(STORE.kv)) {
     db.createObjectStore(STORE.kv, { keyPath: 'key' });
+  }
+  if (!db.objectStoreNames.contains(STORE.sites)) {
+    db.createObjectStore(STORE.sites, { keyPath: 'id' });
+  }
+  if (!db.objectStoreNames.contains(STORE.siteFiles)) {
+    const files = db.createObjectStore(STORE.siteFiles, { keyPath: 'key' });
+    // Uninstalling an app has to find every file it owns.
+    files.createIndex('siteId', 'siteId', { unique: false });
+  }
+  if (!db.objectStoreNames.contains(STORE.apps)) {
+    db.createObjectStore(STORE.apps, { keyPath: 'id' });
   }
 }
 

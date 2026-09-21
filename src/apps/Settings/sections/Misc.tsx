@@ -17,6 +17,7 @@ import { useNotificationStore } from '../../../core/notifications/store';
 import { playSound } from '../../../core/sound';
 import { useSettingsStore } from '../../../core/settings/store';
 import { useBattery, useFullscreen, useNetwork, useViewport } from '../../../hooks/useSystem';
+import { AVATARS } from '../../../desktop/Welcome/avatars';
 import { formatDuration } from '../../../utils/format';
 import { InfoList, Row, Section } from '../Layout';
 
@@ -434,8 +435,6 @@ export function AccessibilitySection() {
 }
 
 /* --------------------------------- Account -------------------------------- */
-
-const AVATARS = ['🌴', '🐚', '🦜', '🌊', '⛵', '🏝️', '🥥', '🌺', '🐠', '☀️', '🦩', '🍍'];
 
 export function AccountSection() {
   const profile = useSettingsStore((s) => s.profile);

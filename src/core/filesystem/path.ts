@@ -89,6 +89,9 @@ export function isValidName(name: string): boolean {
 /** Replace a display path's home prefix with `~`. */
 export function tildify(path: string, home: string): string {
   if (path === home) return '~';
-  if (path.startsWith(`${home}${SEP}`)) return `~${path.slice(home.length)}`;
+  // Palm OS's home *is* the root, so the prefix already ends in a separator;
+  // appending another produced "//" and the abbreviation silently never fired.
+  const prefix = home.endsWith(SEP) ? home : `${home}${SEP}`;
+  if (path.startsWith(prefix)) return `~${SEP}${path.slice(prefix.length)}`;
   return path;
 }

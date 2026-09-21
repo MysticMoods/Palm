@@ -9,6 +9,7 @@ import { useShellStore } from '../../core/shell/store';
 import { useOS } from '../../desktop/app-context';
 import { cn } from '../../utils/cn';
 import { uid } from '../../utils/misc';
+import { chooseMode, explainMode, probeFramePolicy } from './embedding';
 import { InternalPage } from './InternalPages';
 import {
   MAX_HISTORY_ENTRIES,
@@ -130,19 +131,49 @@ export default function BrowserApp({ params }: AppProps<{ url?: string }>) {
     [activeId, engine, history, persistHistory, updateTab],
   );
 
-  /* ---------------------------- Embedding status --------------------------- */
+  /* ---------------------------- Embedding mode ----------------------------- */
 
+  /*
+   * Ask the site how it feels about being framed *before* framing it.
+   *
+   * The alternative — render an iframe and treat silence as refusal — shows
+   * the user a blank rectangle for several seconds and gets it wrong whenever
+   * a slow site is merely slow. Reading the headers is both faster and right.
+   */
+  useEffect(() => {
+    if (isInternal(active.url) || active.policy !== null) return;
+
+    const controller = new AbortController();
+    const url = active.url;
+    const tabId = active.id;
+
+    updateTab(tabId, (tab) => ({ ...tab, checking: true }));
+    void probeFramePolicy(url, controller.signal).then((policy) => {
+      if (controller.signal.aborted) return;
+      updateTab(tabId, (tab) =>
+        tab.url === url
+          ? { ...tab, policy, checking: false, mode: chooseMode(url, policy) }
+          : tab,
+      );
+    });
+
+    return () => controller.abort();
+  }, [active.url, active.id, active.policy, updateTab]);
+
+  /*
+   * A backstop for the case the check could not answer: a frame that is going
+   * to be refused usually never fires `load` at all.
+   */
   useEffect(() => {
     clearTimeout(loadTimer.current);
-    if (isInternal(active.url) || active.status !== 'loading') return;
+    if (isInternal(active.url) || active.mode !== 'embedded' || active.status !== 'loading') return;
 
-    // A blocked frame usually never fires `load`; treat silence as a refusal.
     loadTimer.current = setTimeout(() => {
       updateTab(active.id, (tab) => (tab.status === 'loading' ? { ...tab, status: 'blocked' } : tab));
     }, LOAD_TIMEOUT_MS);
 
     return () => clearTimeout(loadTimer.current);
-  }, [active.url, active.status, active.id, updateTab]);
+  }, [active.url, active.status, active.id, active.mode, updateTab]);
 
   /* --------------------------------- Tabs --------------------------------- */
 
@@ -444,8 +475,20 @@ export default function BrowserApp({ params }: AppProps<{ url?: string }>) {
       <div className="relative min-h-0 flex-1 bg-surface">
         {isInternal(active.url) ? (
           <InternalPage {...internalProps} />
-        ) : active.status === 'blocked' ? (
-          <BlockedPanel url={active.url} onOpenExternally={openExternally} onRetry={() => updateTab(active.id, (tab) => ({ ...tab, status: 'loading' }))} />
+        ) : active.checking ? (
+          <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-ink-3">
+            <Icon name="Loader" size={14} className="anim-spin" />
+            Checking whether {hostOf(active.url)} can be shown here…
+          </div>
+        ) : active.mode === 'normal' || active.status === 'blocked' ? (
+          <NormalModePanel
+            url={active.url}
+            explanation={explainMode(active.url, active.policy)}
+            onOpenExternally={openExternally}
+            onTryEmbedded={() =>
+              updateTab(active.id, (tab) => ({ ...tab, mode: 'embedded', status: 'loading' }))
+            }
+          />
         ) : (
           <>
             <iframe
@@ -463,13 +506,13 @@ export default function BrowserApp({ params }: AppProps<{ url?: string }>) {
             <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
               <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-edge/12 bg-surface/90 px-3 py-1.5 text-[11px] text-ink-3 shadow-[var(--shadow-pop)] backdrop-blur">
                 <Icon name="Info" size={12} />
-                <span>Blank page? The site is refusing to be embedded.</span>
+                <span>Embedded view — you are not signed in here.</span>
                 <button
                   type="button"
                   onClick={openExternally}
                   className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-fg"
                 >
-                  Open properly
+                  Open normally
                 </button>
               </div>
             </div>
@@ -505,14 +548,22 @@ export default function BrowserApp({ params }: AppProps<{ url?: string }>) {
   );
 }
 
-function BlockedPanel({
+/**
+ * Shown instead of a frame that would not work.
+ *
+ * The important thing here is that it offers the thing that *does* work, in
+ * one click, rather than explaining a failure and leaving the user stuck.
+ */
+function NormalModePanel({
   url,
+  explanation,
   onOpenExternally,
-  onRetry,
+  onTryEmbedded,
 }: {
   url: string;
+  explanation: string;
   onOpenExternally: () => void;
-  onRetry: () => void;
+  onTryEmbedded: () => void;
 }) {
   return (
     <div className="os-scroll h-full overflow-y-auto">
@@ -521,24 +572,25 @@ function BlockedPanel({
           <Icon name="Shield" size={26} />
         </span>
         <div>
-          <h2 className="text-[16px] font-semibold text-ink">{hostOf(url)} refuses to be embedded</h2>
-          <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3">
-            The website has a security policy that prevents it from being displayed inside another webpage.
-            This protection is designed to prevent clickjacking attacks and cannot be bypassed using JavaScript.
-          </p>
+          <h2 className="text-[16px] font-semibold text-ink">
+            {hostOf(url)} opens in your browser
+          </h2>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3">{explanation}</p>
         </div>
 
         <Notice tone="neutral" icon="Info" className="w-full text-left">
-          Palm Browser can still bookmark the page, keep it in history and hand it to your real
-          browser, which is the only place it is allowed to render.
+          Palm OS does not remove these protections. They stop a page being framed by a site that
+          wants to trick you into clicking something, and stripping them would make Palm OS the tool
+          that does the tricking. Opening the page properly gives you the real site, with your
+          sign-in and everything else intact.
         </Notice>
 
         <div className="flex flex-wrap justify-center gap-2">
           <Button variant="primary" icon="Share2" onClick={onOpenExternally}>
-            Open in a real browser
+            Open normally
           </Button>
-          <Button variant="ghost" icon="RefreshCw" onClick={onRetry}>
-            Re-Try
+          <Button variant="ghost" icon="AppWindow" onClick={onTryEmbedded}>
+            Try embedded mode
           </Button>
         </div>
 

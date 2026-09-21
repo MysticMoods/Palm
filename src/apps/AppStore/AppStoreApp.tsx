@@ -9,17 +9,20 @@ import type { AppDefinition, AppProps } from '../../core/app-manager/types';
 import { notifications } from '../../core/notifications/store';
 import { PERMISSIONS } from '../../core/permissions/types';
 import { useWindowStore } from '../../core/window-manager/store';
+import { WebApps } from './WebApps';
 import { useOS } from '../../desktop/app-context';
 import { cn } from '../../utils/cn';
 import { matches } from '../../utils/misc';
 
 type Filter = 'all' | 'installed' | 'available';
+type Tab = 'built-in' | 'web';
 
 export default function AppStoreApp(_props: AppProps) {
   const { os } = useOS();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [category, setCategory] = useState<string>('All');
+  const [tab, setTab] = useState<Tab>('built-in');
   const [selected, setSelected] = useState<AppDefinition | null>(null);
 
   const installed = useAppStore((s) => s.installed);
@@ -77,6 +80,19 @@ export default function AppStoreApp(_props: AppProps) {
     <div className="flex h-full min-h-0 flex-col bg-surface">
       {/* --------------------------------- Header ------------------------------- */}
       <div className="shrink-0 border-b border-edge/8 px-4 py-3">
+        <div className="mb-2 flex">
+          <Segmented
+            size="sm"
+            label="Application source"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'built-in', label: 'Built in', icon: 'LayoutGrid' },
+              { value: 'web', label: 'Web applications', icon: 'Package' },
+            ]}
+          />
+        </div>
+        {tab === 'web' ? null : (
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-[180px] flex-1">
             <TextField
@@ -100,7 +116,8 @@ export default function AppStoreApp(_props: AppProps) {
             ]}
           />
         </div>
-
+        )}
+        {tab === 'web' ? null : (
         <div className="os-scroll mt-2 flex gap-1 overflow-x-auto pb-0.5">
           {categories.map((name) => (
             <button
@@ -117,16 +134,20 @@ export default function AppStoreApp(_props: AppProps) {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {/* -------------------------------- Listing ------------------------------- */}
       <div className="os-scroll min-h-0 flex-1 overflow-y-auto p-4">
-        <Notice tone="neutral" icon="Shield" title="Only built-in applications, by design" className="mb-4">
-          Every application listed here ships inside Palm OS and was compiled with it. The store does
-          not download or run third-party code: doing that safely needs a sandbox and a signing model
-          that version 1 does not have, and a store that silently executed remote scripts would be a
-          genuine security hole rather than a feature. The registry is already keyed by manifest, so
-          an audited source can be added later without changing the OS core.
+        {tab === 'web' ? (
+          <WebApps onOpen={(appId) => os.openApp(appId)} />
+        ) : (
+        <>
+        <Notice tone="neutral" icon="Shield" title="Applications that ship with Palm OS" className="mb-4">
+          Every application listed here was compiled into Palm OS and runs on the OS's own origin,
+          with access to your files and settings. Nothing on this tab is downloaded. Third-party
+          applications live under <strong>Web applications</strong>, where each one is installed onto
+          an origin of its own so the browser keeps it away from everything here.
         </Notice>
 
         {filtered.length === 0 ? (
@@ -201,10 +222,12 @@ export default function AppStoreApp(_props: AppProps) {
             })}
           </ul>
         )}
+        </>
+        )}
       </div>
 
       {/* -------------------------------- Details ------------------------------- */}
-      {selected ? (
+      {selected && tab === 'built-in' ? (
         <div className="shrink-0 border-t border-edge/8 bg-surface-2/50 p-4">
           <div className="flex items-start gap-3">
             <span

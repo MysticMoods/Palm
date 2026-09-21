@@ -352,3 +352,126 @@
   border: 1px solid rgb(0 0 0 / 0.18);
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
 }
+
+/* ------------------------- Boot / welcome visuals ----------------------- */
+
+/*
+ * The Palm mark draws its fronds in sequence. Each path carries a `--frond`
+ * index, so one keyframe rule staggers all six without per-element CSS.
+ */
+@keyframes palm-frond-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(-8deg);
+  }
+  to {
+    opacity: inherit;
+    transform: none;
+  }
+}
+
+.palm-mark-animated > * {
+  transform-origin: 12px 12px;
+  animation: palm-frond-in 0.5s var(--ease-os) both;
+  animation-delay: calc(var(--frond, 0) * 90ms);
+}
+
+/*
+ * Slow-drifting colour fields behind the welcome screen. Two layers moving at
+ * different speeds read as depth without a video or a canvas.
+ */
+@keyframes aurora-drift-a {
+  0%,
+  100% {
+    transform: translate3d(-8%, -6%, 0) scale(1.1);
+  }
+  50% {
+    transform: translate3d(6%, 8%, 0) scale(1.3);
+  }
+}
+@keyframes aurora-drift-b {
+  0%,
+  100% {
+    transform: translate3d(10%, 4%, 0) scale(1.25);
+  }
+  50% {
+    transform: translate3d(-6%, -10%, 0) scale(1.05);
+  }
+}
+
+.aurora-a {
+  animation: aurora-drift-a 26s ease-in-out infinite;
+}
+.aurora-b {
+  animation: aurora-drift-b 34s ease-in-out infinite;
+}
+
+@keyframes os-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+.anim-float {
+  animation: os-float 5s ease-in-out infinite;
+}
+
+@keyframes os-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Children reveal in sequence via a `--step` index on each item. */
+.anim-rise > * {
+  animation: os-rise 0.45s var(--ease-os) both;
+  animation-delay: calc(var(--step, 0) * 70ms);
+}
+
+@keyframes os-zoom-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+}
+.anim-zoom-out {
+  animation: os-zoom-out 0.42s var(--ease-os) both;
+}
+
+@keyframes os-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+.anim-sweep {
+  animation: os-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes os-halo {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: translate(-50%, -50%) scale(1.18);
+  }
+}
+.anim-halo {
+  animation: os-halo 4.5s ease-in-out infinite;
+}

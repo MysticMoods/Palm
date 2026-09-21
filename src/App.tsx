@@ -1,21 +1,34 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Button } from './components/ui/Button';
 import { bootPalmOS } from './core/boot';
+import { useSettingsStore } from './core/settings/store';
 import { useShellStore } from './core/shell/store';
 import { registerBuiltInApps } from './apps';
 import { BootScreen } from './desktop/BootScreen';
 import { Shell } from './desktop/Shell';
+import { WelcomeScreen } from './desktop/Welcome/WelcomeScreen';
 
 registerBuiltInApps();
 
 export default function App() {
   const bootPhase = useShellStore((s) => s.bootPhase);
   const bootError = useShellStore((s) => s.bootError);
+  const welcomeCompleted = useSettingsStore((s) => s.settings.welcomeCompleted);
+  /*
+   * Held separately from the setting so the exit animation can finish before
+   * the overlay unmounts, and so "replay the tour" can re-open it without
+   * clearing the stored flag first.
+   */
+  const [showWelcome, setShowWelcome] = useState(false);
 
   useEffect(() => {
     void bootPalmOS();
   }, []);
+
+  useEffect(() => {
+    if (bootPhase === 'ready' && !welcomeCompleted) setShowWelcome(true);
+  }, [bootPhase, welcomeCompleted]);
 
   if (bootPhase !== 'ready') {
     return <BootScreen error={bootPhase === 'error' ? bootError : null} />;
@@ -39,6 +52,7 @@ export default function App() {
       )}
     >
       <Shell />
+      {showWelcome ? <WelcomeScreen onDone={() => setShowWelcome(false)} /> : null}
     </ErrorBoundary>
   );
 }

@@ -4,18 +4,21 @@ import { IconButton } from '../../components/ui/Button';
 import { EmptyState, Notice } from '../../components/ui/Feedback';
 import { Slider } from '../../components/ui/Slider';
 import type { AppProps } from '../../core/app-manager/types';
-import { categoryForMime } from '../../core/filesystem/mime';
+import { categoryForMime, mimeFromName } from '../../core/filesystem/mime';
 import { useFsRevision } from '../../core/filesystem/useFs';
 import { vfs } from '../../core/filesystem/vfs';
 import type { FSNode } from '../../core/filesystem/types';
 import { useSettingsStore } from '../../core/settings/store';
 import { useIsNarrow } from '../../hooks/useElementWidth';
+import { disk } from '../../core/filesystem/disk-store';
 import { useOS } from '../../desktop/app-context';
 import { usePermissionGate } from '../../desktop/use-permission';
 import { cn } from '../../utils/cn';
 import { formatDuration } from '../../utils/format';
 
-export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nodeId?: string }>) {
+export default function MediaPlayerApp({
+  params,
+}: AppProps<{ path?: string; nodeId?: string; volume?: 'vfs' | 'disk' }>) {
   const { os } = useOS();
   const revision = useFsRevision();
   const ensureFilesystem = usePermissionGate('filesystem', 'Play audio and video stored in your Palm OS filesystem.');
@@ -38,8 +41,12 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
   const [repeat, setRepeat] = useState(false);
   const [shuffle, setShuffle] = useState(false);
 
+  const onDisk = params?.volume === 'disk';
+  const diskPath = onDisk ? (params?.path ?? null) : null;
   const node = currentId ? vfs.getNode(currentId) : null;
-  const isVideo = node ? categoryForMime(node.mime) === 'video' : false;
+  const displayName = diskPath ? (diskPath.split('/').pop() ?? '') : (node?.name ?? '');
+  const mime = diskPath ? mimeFromName(displayName) : (node?.mime ?? '');
+  const isVideo = mime ? categoryForMime(mime) === 'video' : false;
 
   /** Everything playable in the same folder, forming an implicit playlist. */
   const playlist = useMemo(() => {
@@ -62,7 +69,35 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
     else if (params?.path) setCurrentId(vfs.nodeAt(params.path)?.id ?? null);
   }, [params?.nodeId, params?.path]);
 
+  /* Palm Disk media streams from the real file. */
   useEffect(() => {
+    if (!diskPath) return;
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setError(null);
+
+    disk
+      .createObjectURL(diskPath)
+      .then((created) => {
+        if (cancelled) {
+          URL.revokeObjectURL(created);
+          return;
+        }
+        objectUrl = created;
+        setUrl(created);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [diskPath]);
+
+  useEffect(() => {
+    if (diskPath) return;
     if (!currentId) {
       setUrl(null);
       return;
@@ -89,11 +124,11 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [currentId, ensureFilesystem]);
+  }, [currentId, diskPath, ensureFilesystem]);
 
   useEffect(() => {
-    os.window.setTitle(node ? `${node.name} — Media Player` : 'Media Player');
-  }, [node, os]);
+    os.window.setTitle(displayName ? `${displayName} — Media Player` : 'Media Player');
+  }, [displayName, os]);
 
   /* Volume comes from the system setting so the tray slider controls playback. */
   useEffect(() => {
@@ -131,7 +166,7 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
     }
   }, []);
 
-  if (!node) {
+  if (!node && !diskPath) {
     return (
       <EmptyState
         icon="Film"
@@ -178,7 +213,7 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
               }}
               onError={() =>
                 setError(
-                  `Your browser cannot decode this file (${node.mime}). Browsers only support a limited set of codecs.`,
+                  `Your browser cannot decode this file (${mime || 'unknown type'}). Browsers only support a limited set of codecs.`,
                 )
               }
               onClick={togglePlay}
@@ -197,8 +232,11 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
                 <Icon name="Music" size={48} strokeWidth={1.4} />
               </span>
               <div>
-                <p className="text-[15px] font-medium text-white">{node.name}</p>
-                <p className="mt-0.5 text-[12px] text-white/50">{node.mime}</p>
+                <p className="text-[15px] font-medium text-white">{displayName}</p>
+                <p className="mt-0.5 text-[12px] text-white/50">
+                  {mime}
+                  {diskPath ? ' · Palm Disk' : ''}
+                </p>
               </div>
             </div>
           ) : null}
@@ -242,7 +280,13 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
 
           <div className="mt-2 flex flex-wrap items-center gap-1">
             <IconButton icon="Shuffle" label="Shuffle" size="sm" active={shuffle} onClick={() => setShuffle(!shuffle)} />
-            <IconButton icon="SkipBack" label="Previous" size="sm" disabled={playlist.length < 2} onClick={() => step(-1)} />
+            <IconButton
+              icon="SkipBack"
+              label="Previous"
+              size="sm"
+              disabled={!!diskPath || playlist.length < 2}
+              onClick={() => step(-1)}
+            />
             <IconButton
               icon={playing ? 'Pause' : 'Play'}
               label={playing ? 'Pause' : 'Play'}
@@ -250,10 +294,16 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
               variant="primary"
               onClick={togglePlay}
             />
-            <IconButton icon="SkipForward" label="Next" size="sm" disabled={playlist.length < 2} onClick={() => step(1)} />
+            <IconButton
+              icon="SkipForward"
+              label="Next"
+              size="sm"
+              disabled={!!diskPath || playlist.length < 2}
+              onClick={() => step(1)}
+            />
             <IconButton icon="Repeat" label="Repeat" size="sm" active={repeat} onClick={() => setRepeat(!repeat)} />
 
-            <div className="mx-2 min-w-0 flex-1 truncate text-[12px] text-ink-2">{node.name}</div>
+            <div className="mx-2 min-w-0 flex-1 truncate text-[12px] text-ink-2">{displayName}</div>
 
             <div className="w-32 shrink-0">
               <Slider
@@ -282,7 +332,7 @@ export default function MediaPlayerApp({ params }: AppProps<{ path?: string; nod
       </div>
 
       {/* ------------------------------- Playlist ------------------------------- */}
-      {playlist.length > 1 && !narrow ? (
+      {playlist.length > 1 && !narrow && !diskPath ? (
         <aside
           aria-label="Playlist"
           className="flex w-56 shrink-0 flex-col border-l border-edge/8 bg-surface-2/30"

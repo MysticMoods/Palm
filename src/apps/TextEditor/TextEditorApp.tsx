@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../components/icons';
 import { Button, IconButton } from '../../components/ui/Button';
 import { TextField } from '../../components/ui/Field';
-import { Modal } from '../../components/ui/Modal';
+import { ConfirmDialog, Modal } from '../../components/ui/Modal';
 import { Notice } from '../../components/ui/Feedback';
 import type { AppProps } from '../../core/app-manager/types';
 import { isTextMime } from '../../core/filesystem/mime';
 import * as path from '../../core/filesystem/path';
+import { disk, useDiskStore } from '../../core/filesystem/disk-store';
 import { FSError, vfs } from '../../core/filesystem/vfs';
-import { downloadBlob } from '../../core/filesystem/local';
+import { downloadBlob } from '../../core/filesystem/transfer';
 import { notifications } from '../../core/notifications/store';
 import { useOS } from '../../desktop/app-context';
 import { usePermissionGate } from '../../desktop/use-permission';
@@ -21,6 +22,9 @@ const AUTOSAVE_MS = 1500;
 interface EditorParams {
   path?: string;
   nodeId?: string;
+  /** 'disk' means a real file on Palm Disk, which is opened read-only. */
+  volume?: 'vfs' | 'disk';
+  readOnly?: boolean;
 }
 
 export default function TextEditorApp({ params }: AppProps<EditorParams>) {
@@ -43,6 +47,19 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [wrap, setWrap] = useState(true);
+  /* A file on Palm Disk is someone's real file; phase one never writes. */
+  const onDisk = params?.volume === 'disk';
+  const [diskPath, setDiskPath] = useState<string | null>(onDisk ? (params?.path ?? null) : null);
+  const diskWritable = useDiskStore((s) => s.writable);
+  const requestDiskWrite = useDiskStore((s) => s.requestWrite);
+  /*
+   * Overwriting a real file is irreversible — there is no Trash on someone's
+   * disk — so the first save of each file in this window is acknowledged
+   * explicitly. Creating a file is additive and only needs the one-time
+   * permission grant; replacing one deserves its own moment.
+   */
+  const [confirmDiskWrite, setConfirmDiskWrite] = useState(false);
+  const [overwriteAcknowledged, setOverwriteAcknowledged] = useState(false);
 
   const history = useUndoHistory('');
   const { text, commit, reset, undo, redo, canUndo, canRedo } = history;
@@ -52,7 +69,31 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
 
   /* --------------------------------- Load -------------------------------- */
 
+  /* Reading from Palm Disk takes a different path to the virtual filesystem. */
   useEffect(() => {
+    if (params?.volume !== 'disk' || !params.path) return;
+    let cancelled = false;
+    setDiskPath(params.path);
+    setOverwriteAcknowledged(false);
+    disk
+      .readText(params.path)
+      .then((content) => {
+        if (cancelled) return;
+        reset(content);
+        setSavedText(content);
+        setNodeId(null);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [params?.volume, params?.path, reset]);
+
+  useEffect(() => {
+    if (params?.volume === 'disk') return;
     const target = params?.nodeId ?? (params?.path ? vfs.nodeAt(params.path)?.id : undefined);
     if (!target) return;
 
@@ -95,12 +136,54 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
     return () => {
       cancelled = true;
     };
-  }, [ensureFilesystem, params?.nodeId, params?.path, reset]);
+  }, [ensureFilesystem, params?.nodeId, params?.path, params?.volume, reset]);
 
   /* ---------------------------------- Save -------------------------------- */
 
+  /** Write the buffer back to the real file on Palm Disk. */
+  const saveToDisk = useCallback(async () => {
+    if (!diskPath) return;
+    setConfirmDiskWrite(false);
+    setSaving(true);
+    try {
+      if (!(await requestDiskWrite())) {
+        notifications.push('text-editor', {
+          title: 'Cannot save to Palm Disk',
+          body: 'Your browser did not grant permission to modify files in that folder.',
+          urgency: 'critical',
+        });
+        return;
+      }
+      await disk.writeFile(diskPath, text);
+      setSavedText(text);
+      setSavedAt(Date.now());
+      setOverwriteAcknowledged(true);
+      useDiskStore.getState().refresh(diskPath.slice(0, diskPath.lastIndexOf('/')) || '/');
+      notifications.push('text-editor', {
+        title: `Saved "${diskPath.split('/').pop()}" to Palm Disk`,
+        body: 'The real file on your computer has been replaced.',
+        tag: 'save',
+      });
+    } catch (err) {
+      notifications.push('text-editor', {
+        title: 'Could not save to Palm Disk',
+        body: err instanceof Error ? err.message : String(err),
+        urgency: 'critical',
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [diskPath, requestDiskWrite, text]);
+
   const save = useCallback(
     async (silent = false) => {
+      if (onDisk) {
+        // The dialog covers both the permission grant and the acknowledgement
+        // that a real file is about to be replaced.
+        if (diskWritable && overwriteAcknowledged) void saveToDisk();
+        else setConfirmDiskWrite(true);
+        return;
+      }
       if (!nodeId) {
         setSaveAsOpen(true);
         return;
@@ -135,16 +218,16 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
         setSaving(false);
       }
     },
-    [ensureFilesystem, nodeId, text],
+    [diskWritable, ensureFilesystem, nodeId, onDisk, overwriteAcknowledged, saveToDisk, text],
   );
 
   /* Autosave keeps work safe; the explicit Save button still exists because
      people expect one, and it gives feedback that autosave cannot. */
   useEffect(() => {
-    if (!nodeId || !dirty) return;
+    if (onDisk || !nodeId || !dirty) return;
     const timer = setTimeout(() => void save(true), AUTOSAVE_MS);
     return () => clearTimeout(timer);
-  }, [dirty, nodeId, save, text]);
+  }, [dirty, nodeId, onDisk, save, text]);
 
   /* Warn before closing with unsaved changes. */
   useEffect(() => {
@@ -152,8 +235,9 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
   }, [dirty, os]);
 
   useEffect(() => {
-    os.window.setTitle(`${dirty ? '• ' : ''}${node?.name ?? 'Untitled'} — Text Editor`);
-  }, [dirty, node?.name, os]);
+    const name = onDisk ? (diskPath?.split('/').pop() ?? 'Untitled') : (node?.name ?? 'Untitled');
+    os.window.setTitle(`${dirty ? '• ' : ''}${name}${onDisk ? ' — Palm Disk' : ''} — Text Editor`);
+  }, [dirty, diskPath, node?.name, onDisk, os]);
 
   /* Also warn on a full page unload, which the OS cannot intercept itself. */
   useEffect(() => {
@@ -367,9 +451,9 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
         />
         <IconButton
           icon="Save"
-          label="Save (Ctrl+S)"
+          label={onDisk ? 'Save to the real file on your computer (Ctrl+S)' : 'Save (Ctrl+S)'}
           size="sm"
-          disabled={saving || (!dirty && nodeId !== null)}
+          disabled={saving || (!dirty && (onDisk || nodeId !== null))}
           onClick={() => void save()}
         />
         <div className="mx-1 h-5 w-px bg-edge/12" aria-hidden="true" />
@@ -398,11 +482,17 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
         />
 
         <span className="mx-1 min-w-0 flex-1 truncate text-center text-[12px] text-ink-3">
-          {node ? vfs.pathOf(node.id) : 'Untitled document'}
-          {dirty ? ' •' : ''}
+          {onDisk ? `Palm Disk · ${diskPath ?? ''}` : node ? vfs.pathOf(node.id) : 'Untitled document'}
+          {dirty && !onDisk ? ' •' : ''}
         </span>
 
-        <Button size="sm" variant="ghost" icon="Pencil" disabled={!nodeId} onClick={() => setRenameOpen(true)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="Pencil"
+          disabled={onDisk || !nodeId}
+          onClick={() => setRenameOpen(true)}
+        >
           Rename
         </Button>
         <Button size="sm" variant="ghost" icon="Share2" onClick={() => setSaveAsOpen(true)}>
@@ -523,7 +613,11 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
           {stats.lines} lines · {stats.words} words · {stats.characters} characters
         </span>
         <span className="flex items-center gap-1.5">
-          {saving ? (
+          {onDisk && !dirty && !saving ? (
+            <>
+              <Icon name="Database" size={11} className="text-warn" /> Real file on your computer
+            </>
+          ) : saving ? (
             <>
               <Icon name="Loader" size={11} className="anim-spin" /> Saving…
             </>
@@ -540,6 +634,21 @@ export default function TextEditorApp({ params }: AppProps<EditorParams>) {
           )}
         </span>
       </div>
+
+      <ConfirmDialog
+        open={confirmDiskWrite}
+        title={`Overwrite “${diskPath?.split('/').pop() ?? ''}” on your computer?`}
+        description={
+          diskWritable
+            ? 'This replaces the real file on your disk. Palm OS has no Trash for real files, so this cannot be undone from here.'
+            : 'Your browser will ask for permission to modify this folder, and the real file on your disk will be replaced. Palm OS has no Trash for real files, so this cannot be undone from here.'
+        }
+        confirmLabel="Overwrite the real file"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => void saveToDisk()}
+        onCancel={() => setConfirmDiskWrite(false)}
+      />
 
       <SaveAsDialog
         open={saveAsOpen}

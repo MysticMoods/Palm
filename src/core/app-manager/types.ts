@@ -54,6 +54,13 @@ export interface AppDefinition {
   keywords?: string[];
   /** Hidden from the launcher (e.g. dialogs, the Trash view). */
   hidden?: boolean;
+  /**
+   * Launch parameters baked into the manifest.
+   *
+   * Archived web apps all share one viewer component and are distinguished by
+   * the site id carried here.
+   */
+  props?: Record<string, unknown>;
   /** Lazily-loaded UI. */
   component: LazyExoticComponent<ComponentType<AppProps<never>>> | ComponentType<AppProps<never>>;
 }

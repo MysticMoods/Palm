@@ -9,6 +9,9 @@
 
 import { hydrateAppManager } from './app-manager/store';
 import { hydrateCalendar } from './calendar/store';
+import { restoreDisk } from './filesystem/disk-store';
+import { retireOsWorker } from './sites/retire-sw';
+import { useSitesStore } from './sites/store';
 import { ensureDefaultFolders, needsSeed, seedFilesystem } from './filesystem/seed';
 import { vfs } from './filesystem/vfs';
 import { hydrateNotifications } from './notifications/store';
@@ -53,6 +56,17 @@ export function bootPalmOS(): Promise<void> {
       step('desktop', hydrateDesktop),
       step('windows', hydrateWindowPreferences),
       step('calendar', hydrateCalendar),
+      // Reattaches a remembered folder when the browser still permits it;
+      // otherwise Files offers a Reconnect button, which has the gesture.
+      step('disk', restoreDisk),
+      // Installed web applications register themselves with the launcher as
+      // they load. Their archives live on their own origins, not here.
+      step('installed apps', () => useSitesStore.getState().load()),
+      // Palm OS no longer serves anything through a worker of its own; an old
+      // one left over from the previous design is removed.
+      step('retire old worker', async () => {
+        await retireOsWorker();
+      }),
     ]);
 
     useShellStore.getState().setBoot('ready');

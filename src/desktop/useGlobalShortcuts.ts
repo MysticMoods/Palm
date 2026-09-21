@@ -8,7 +8,7 @@
  */
 
 import { useEffect } from 'react';
-import { registerShortcuts, startKeyboardManager } from '../core/keyboard/manager';
+import { registerShortcuts, shortcutsSuspended, startKeyboardManager } from '../core/keyboard/manager';
 import { getSettings } from '../core/settings/store';
 import { useShellStore } from '../core/shell/store';
 import { useWindowStore } from '../core/window-manager/store';
@@ -28,6 +28,13 @@ export function useGlobalShortcuts(): void {
       if (win) useWindowStore.getState().snapTo(win.id, zone);
     };
 
+    /** Open the switcher, or advance it if a gesture is already running. */
+    const step = (direction: 1 | -1, sticky: boolean) => {
+      const manager = useWindowStore.getState();
+      if (manager.switcher) manager.moveSwitch(direction);
+      else manager.beginSwitch(direction, sticky);
+    };
+
     const unregister = registerShortcuts([
       {
         id: 'search',
@@ -41,14 +48,21 @@ export function useGlobalShortcuts(): void {
         shortcut: 'Alt+Tab',
         description: 'Switch between windows',
         allowInInputs: true,
-        handler: () => useWindowStore.getState().cycleFocus(1),
+        handler: () => step(1, false),
       },
       {
         id: 'switch-window-back',
         shortcut: 'Alt+Shift+Tab',
         description: 'Switch backwards between windows',
         allowInInputs: true,
-        handler: () => useWindowStore.getState().cycleFocus(-1),
+        handler: () => step(-1, false),
+      },
+      {
+        id: 'switch-window-sticky',
+        shortcut: 'Ctrl+Alt+W',
+        description: 'Open the window switcher',
+        allowInInputs: true,
+        handler: () => step(1, true),
       },
       {
         id: 'close-window',
@@ -118,6 +132,11 @@ export function useGlobalShortcuts(): void {
         passive: true,
         allowInInputs: true,
         handler: () => {
+          const manager = useWindowStore.getState();
+          if (manager.switcher) {
+            manager.cancelSwitch();
+            return;
+          }
           const state = useShellStore.getState();
           if (state.contextMenu) state.closeContextMenu();
           else if (state.panel) state.closePanel();
@@ -133,9 +152,32 @@ export function useGlobalShortcuts(): void {
      */
     let superAlone = false;
     const onKeyDown = (event: KeyboardEvent) => {
-      superAlone = event.key === 'Meta' || event.key === 'OS';
+      superAlone = !shortcutsSuspended() && (event.key === 'Meta' || event.key === 'OS');
+
+      /*
+       * Cancelling a switch is handled here rather than through a registered
+       * shortcut: the declarative binding for Escape requires no modifiers,
+       * and during a held Alt+Tab gesture Alt is by definition down, so it
+       * would never match.
+       */
+      if (event.key === 'Escape' && !shortcutsSuspended()) {
+        const manager = useWindowStore.getState();
+        if (manager.switcher) {
+          event.preventDefault();
+          manager.cancelSwitch();
+        }
+      }
     };
     const onKeyUp = (event: KeyboardEvent) => {
+      if (shortcutsSuspended()) return;
+
+      // Releasing Alt confirms a held Alt+Tab gesture, the way a desktop
+      // switcher does. Sticky switchers ignore this and wait for Enter.
+      if (event.key === 'Alt') {
+        const manager = useWindowStore.getState();
+        if (manager.switcher && !manager.switcher.sticky) manager.commitSwitch();
+      }
+
       if ((event.key === 'Meta' || event.key === 'OS') && superAlone) {
         superAlone = false;
         useShellStore.getState().togglePanel('start');

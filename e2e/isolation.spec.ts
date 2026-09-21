@@ -1,0 +1,351 @@
+import { expect, test as base } from '@playwright/test';
+import type { Frame, Page } from '@playwright/test';
+import { Palm } from './fixtures';
+import { installedManifests, routeFixture } from './site-fixture';
+
+/**
+ * The security boundary, asserted rather than assumed.
+ *
+ * Every other feature of installed applications is a convenience. This is the
+ * part that has to be true: an application is somebody else's JavaScript, and
+ * the only thing standing between it and the user's files, settings and other
+ * applications is that the browser considers it a different origin.
+ *
+ * So these tests do not check that the code *intends* isolation. They put data
+ * on one side and try to read it from the other.
+ */
+const test = base.extend<{ palm: Palm }>({
+  palm: async ({ page }, use) => {
+    await routeFixture(page);
+    const palm = new Palm(page);
+    await palm.boot();
+    await use(palm);
+  },
+});
+
+/**
+ * Install one application and return its manifest.
+ *
+ * Polled rather than read once: installing crosses to another origin and back,
+ * which takes longer than the shell prompt does to return.
+ */
+async function install(palm: Palm, url: string, name: string) {
+  await palm.runCommand(`fetchsite ${url} ${name} --no-capture`);
+  await expect
+    .poll(
+      async () => (await installedManifests(palm.page)).some((entry) => entry.name === name),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  const manifests = await installedManifests(palm.page);
+  return manifests.find((entry) => entry.name === name)!;
+}
+
+/**
+ * The frame an application is running in, once its window is open.
+ *
+ * `/_papp/` is excluded deliberately: Palm OS opens a short-lived installer
+ * frame on the *same* origin whenever it installs or changes permissions, and
+ * matching that instead would look like the application and evaluate nothing.
+ */
+function findAppFrame(page: Page, appId: string): Frame | undefined {
+  const origin = `http://${appId}.localhost:4173`;
+  return page
+    .frames()
+    .find((frame) => frame.url().startsWith(origin) && !frame.url().includes('/_papp/'));
+}
+
+async function appFrame(page: Page, appId: string): Promise<Frame> {
+  await expect.poll(() => Boolean(findAppFrame(page, appId)), { timeout: 15_000 }).toBe(true);
+  return findAppFrame(page, appId)!;
+}
+
+/**
+ * Read something from the application, re-resolving the frame each time.
+ *
+ * The frame is replaced whenever the application is reloaded — which changing
+ * a permission does — so a handle taken beforehand goes stale.
+ */
+function pollApp<T>(page: Page, appId: string, read: () => string) {
+  return expect.poll(
+    async () => {
+      const frame = findAppFrame(page, appId);
+      if (!frame) return undefined as T | undefined;
+      try {
+        return (await frame.evaluate(read)) as T;
+      } catch {
+        // Detached mid-reload; the next poll gets the new one.
+        return undefined as T | undefined;
+      }
+    },
+    { timeout: 20_000 },
+  );
+}
+
+test.describe('origin isolation', () => {
+  test('an installed application runs on its own origin, not on Palm OS’s', async ({
+    palm,
+    page,
+  }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+
+    await palm.launch('Notepad');
+    const frame = await appFrame(page, manifest.id);
+
+    const frameOrigin = new URL(frame.url()).origin;
+    expect(frameOrigin).toBe(`http://${manifest.id}.localhost:4173`);
+    expect(frameOrigin).not.toBe(new URL(page.url()).origin);
+    // The id is a DNS label, which is what makes the subdomain scheme work.
+    expect(manifest.id).toMatch(/^app-[0-9a-f]{12}$/);
+  });
+
+  test('the application cannot read Palm OS’s storage', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    // Put something identifiable in Palm OS's own storage first, so a pass
+    // means "could not read it", not "there was nothing to read".
+    await page.evaluate(async () => {
+      localStorage.setItem('palm-os-marker', 'os-only');
+    });
+
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+    const frame = await appFrame(page, manifest.id);
+
+    const seen = await frame.evaluate(async () => {
+      const localStorageValue = (() => {
+        try {
+          return localStorage.getItem('palm-os-marker');
+        } catch {
+          return 'threw';
+        }
+      })();
+
+      // Opening the OS database by name from here gets a *new*, empty database
+      // on this origin — not the OS's.
+      const stores = await new Promise<string[]>((resolve) => {
+        const request = indexedDB.open('palm-os');
+        request.onsuccess = () => resolve([...request.result.objectStoreNames]);
+        request.onerror = () => resolve(['error']);
+      });
+
+      return { localStorageValue, stores };
+    });
+
+    expect(seen.localStorageValue).toBeNull();
+    // Palm OS's database has nodes, contents, kv, apps… this one has nothing.
+    expect(seen.stores).toEqual([]);
+  });
+
+  test('Palm OS cannot reach into the application either', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+    await appFrame(page, manifest.id);
+
+    // The browser refuses a cross-origin document access; Palm OS holds a
+    // handle to the frame but can see nothing through it.
+    const reach = await page.evaluate(() => {
+      const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Notepad"]');
+      if (!frame) return 'no frame';
+      try {
+        const doc = frame.contentDocument;
+        return doc ? `read ${doc.title}` : 'null document';
+      } catch {
+        return 'threw';
+      }
+    });
+    expect(['null document', 'threw']).toContain(reach);
+  });
+
+  test('two applications cannot see each other’s storage', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const alpha = await install(palm, 'https://storage-a.test/', 'StoreA');
+    const beta = await install(palm, 'https://storage-b.test/', 'StoreB');
+    expect(alpha.id).not.toBe(beta.id);
+
+    await palm.launch('StoreA');
+    const frameA = await appFrame(page, alpha.id);
+    await expect
+      .poll(() => frameA.evaluate(() => document.body.dataset.wrote), { timeout: 10_000 })
+      .toBe('yes');
+
+    await palm.launch('StoreB');
+    const frameB = await appFrame(page, beta.id);
+
+    const seen = await frameB.evaluate(() => {
+      try {
+        return localStorage.getItem('app-secret');
+      } catch {
+        return 'threw';
+      }
+    });
+    expect(seen).toBeNull();
+
+    // And Palm OS cannot see it either.
+    expect(await page.evaluate(() => localStorage.getItem('app-secret'))).toBeNull();
+  });
+
+  test('Palm OS’s own document is never served on an application origin', async ({
+    palm,
+    page,
+  }) => {
+    await palm.launch('Terminal');
+    await install(palm, 'https://fixture.test/', 'Notepad');
+
+    // An application id that was never installed: the origin still must not
+    // answer with the OS. Booting a second copy of Palm OS there would put its
+    // code on an origin meant for third-party applications.
+    await page.goto('http://app-000000000000.localhost:4173/');
+    const body = await page.locator('body').innerText();
+    expect(body).not.toContain('Taskbar');
+    expect(await page.locator('[role="toolbar"][aria-label="Taskbar"]').count()).toBe(0);
+    expect(body).toContain('app-000000000000');
+  });
+
+  test('no service worker controls the Palm OS origin', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+
+    // Each application's worker is scoped to its own origin. Palm OS has none
+    // of its own, and an application's cannot reach across.
+    const state = await page.evaluate(async () => ({
+      controller: navigator.serviceWorker.controller?.scriptURL ?? null,
+      registrations: (await navigator.serviceWorker.getRegistrations()).map((r) => r.scope),
+    }));
+    expect(state.controller).toBeNull();
+    expect(state.registrations).toEqual([]);
+  });
+
+  test('each application’s service worker is scoped to its own origin', async ({
+    palm,
+    page,
+  }) => {
+    await palm.launch('Terminal');
+    const alpha = await install(palm, 'https://storage-a.test/', 'StoreA');
+    const beta = await install(palm, 'https://storage-b.test/', 'StoreB');
+
+    await palm.launch('StoreA');
+    await palm.launch('StoreB');
+    const frameA = await appFrame(page, alpha.id);
+    const frameB = await appFrame(page, beta.id);
+
+    const scopeOf = (frame: Frame) =>
+      frame.evaluate(async () => {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        return registrations.map((registration) => registration.scope);
+      });
+
+    expect(await scopeOf(frameA)).toEqual([`http://${alpha.id}.localhost:4173/`]);
+    expect(await scopeOf(frameB)).toEqual([`http://${beta.id}.localhost:4173/`]);
+  });
+});
+
+test.describe('application policy', () => {
+  test('the security headers cut an offline application off from the network', async ({
+    palm,
+    page,
+  }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+    const frame = await appFrame(page, manifest.id);
+
+    const policy = await frame.evaluate(async () => {
+      const response = await fetch(location.href);
+      return {
+        csp: response.headers.get('content-security-policy'),
+        permissions: response.headers.get('permissions-policy'),
+        nosniff: response.headers.get('x-content-type-options'),
+      };
+    });
+
+    // `connect-src` is what stops fetch, XHR, EventSource *and* WebSockets —
+    // the last of which a service worker cannot intercept at all.
+    expect(policy.csp).toContain("connect-src 'self' blob: data:");
+    expect(policy.csp).not.toContain('connect-src https:');
+    // Only Palm OS may frame an application.
+    expect(policy.csp).toContain('frame-ancestors http://localhost:4173');
+    expect(policy.permissions).toContain('camera=()');
+    expect(policy.nosniff).toBe('nosniff');
+  });
+
+  test('an offline application cannot reach another origin', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+    const frame = await appFrame(page, manifest.id);
+
+    const result = await frame.evaluate(async () => {
+      try {
+        await fetch('http://localhost:4173/_palm/origin-info');
+        return 'reached';
+      } catch (error) {
+        return `blocked: ${(error as Error).name}`;
+      }
+    });
+    expect(result).toMatch(/^blocked/);
+  });
+});
+
+test.describe('the application bridge', () => {
+  test('is offered to the application but grants nothing by default', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://bridge.test/', 'Bridged');
+    await palm.launch('Bridged');
+    const frame = await appFrame(page, manifest.id);
+
+    await expect
+      .poll(() => frame.evaluate(() => document.body.dataset.hasBridge), { timeout: 10_000 })
+      .toBe('true');
+
+    // The request is refused because the permission was never granted, and the
+    // application is told why rather than left hanging.
+    await expect
+      .poll(() => frame.evaluate(() => document.body.dataset.notify), { timeout: 10_000 })
+      .toMatch(/^refused/);
+    const message = await frame.evaluate(() => document.body.dataset.notify);
+    expect(message).toContain('Notifications');
+  });
+
+  test('refuses a request Palm OS does not implement', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://bridge.test/', 'Bridged');
+    await palm.launch('Bridged');
+    const frame = await appFrame(page, manifest.id);
+
+    await frame.evaluate(() => (window as unknown as { tryForbidden: () => void }).tryForbidden());
+    await expect
+      .poll(() => frame.evaluate(() => document.body.dataset.forbidden), { timeout: 10_000 })
+      .toMatch(/^refused/);
+  });
+
+  test('works once the permission is granted', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://bridge.test/', 'Bridged');
+    await palm.launch('Bridged');
+
+    /*
+     * Grant Notifications from the application's own details panel. Scoped to
+     * the label rather than by accessible name: "Notifications" also names the
+     * notification centre, and the first match would be that.
+     */
+    await page.getByRole('button', { name: 'About this application' }).click();
+    const toggle = page
+      .locator('label', { hasText: 'Post notifications to the Palm OS' })
+      .locator('input[type="checkbox"]')
+      .first();
+    await toggle.click();
+    await expect(toggle).toBeChecked();
+
+    /*
+     * The application reloads when its permissions change, and its script runs
+     * `tryNotify()` on load — so the outcome recorded on the fresh document is
+     * the one made under the new permission.
+     */
+    await pollApp<string>(page, manifest.id, () => document.body.dataset.notify ?? '').toBe(
+      'allowed',
+    );
+  });
+});

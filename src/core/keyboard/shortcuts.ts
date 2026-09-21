@@ -101,7 +101,12 @@ export function formatShortcut(shortcut: string): string {
     backspace: '⌫',
     tab: 'Tab',
   };
-  parts.push(keyLabels[parsed.key] ?? parsed.key.toUpperCase());
+
+  // A modifier-only shortcut (the bare Super key) has no key to append; without
+  // this it would render as "Super + ".
+  if (parsed.key.length > 0) {
+    parts.push(keyLabels[parsed.key] ?? parsed.key.toUpperCase());
+  }
   return parts.join(mac ? '' : ' + ');
 }
 
@@ -113,5 +118,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
     const type = (target as HTMLInputElement).type;
     return !['checkbox', 'radio', 'button', 'submit', 'range', 'color', 'file'].includes(type);
   }
-  return tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+  // `=== true` rather than a bare read: the property is always a boolean in a
+  // real browser, but not everywhere, and the declared return type should hold.
+  return tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable === true;
 }

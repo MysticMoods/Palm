@@ -104,15 +104,15 @@ function tokenize(line: string): Token[] {
     }
 
     if (char === '&') {
-      push();
       if (line[index + 1] === '&') {
+        push();
         index += 1;
         tokens.push({ value: '&&', operator: '&&' });
         continue;
       }
       // A single `&` would mean "run in the background", which this shell has
-      // no concept of; treating it as an ordinary character is less surprising
-      // than silently dropping it.
+      // no concept of. Treat it as an ordinary character — and do not flush the
+      // current token first, or `a&b` would split into two arguments.
       current += char;
       continue;
     }

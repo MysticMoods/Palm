@@ -8,7 +8,7 @@ import { useClipboardStore } from '../../core/clipboard/store';
 import { useDirectory, useFsRevision } from '../../core/filesystem/useFs';
 import { FSError, vfs } from '../../core/filesystem/vfs';
 import type { FSNode } from '../../core/filesystem/types';
-import { downloadBlob } from '../../core/filesystem/local';
+import { downloadBlob } from '../../core/filesystem/transfer';
 import { DEFAULT_FOLDERS } from '../../core/filesystem/seed';
 import { notifications } from '../../core/notifications/store';
 import { OS } from '../../core/os';
@@ -18,6 +18,8 @@ import { useShellStore } from '../../core/shell/store';
 import type { ContextMenuItem } from '../../core/shell/store';
 import type { AppProps } from '../../core/app-manager/types';
 import { DROP_MIME, importDroppedFiles, moveNodesInto, readDroppedNodes, writeDraggedNodes } from '../../desktop/dnd';
+import { useDiskStore } from '../../core/filesystem/disk-store';
+import { useOpenDiskFile } from './useDisk';
 import { useIsNarrow } from '../../hooks/useElementWidth';
 import { useOS } from '../../desktop/app-context';
 import { cn } from '../../utils/cn';
@@ -25,7 +27,7 @@ import { formatBytes, pluralize } from '../../utils/format';
 import { sortNodes } from './file-icons';
 import type { SortDirection, SortKey } from './file-icons';
 import { GridView, ListView } from './FileViews';
-import { LocalDisk } from './LocalDisk';
+import { DiskView } from './DiskView';
 import { PropertiesDialog } from './PropertiesDialog';
 import { Sidebar } from './Sidebar';
 import type { FilesParams, FilesView, ViewMode } from './types';
@@ -51,12 +53,21 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
   const [confirmTrash, setConfirmTrash] = useState<FSNode[] | null>(null);
   const [dropActive, setDropActive] = useState(false);
 
+  /* Palm Disk keeps its own cursor: it is a separate volume, not a folder. */
+  const [diskPath, setDiskPath] = useState(params?.diskPath ?? '/');
+  const [diskSelected, setDiskSelected] = useState<string | null>(null);
+  const diskStatus = useDiskStore((s) => s.status);
+  const diskLabel = useDiskStore((s) => s.label);
+  const refreshDisk = useDiskStore((s) => s.refresh);
+  const openDiskEntry = useOpenDiskFile();
+
   const path = history[historyIndex] ?? '/';
   const { node: folder, children } = useDirectory(view === 'files' ? path : null);
 
   /* Respond to a second launch of the app with new parameters. */
   useEffect(() => {
     if (params?.view && params.view !== view) setView(params.view);
+    if (params?.diskPath) setDiskPath(params.diskPath);
     if (params?.path && params.path !== path) {
       setHistory((previous) => [...previous.slice(0, historyIndex + 1), params.path!]);
       setHistoryIndex((index) => index + 1);
@@ -68,9 +79,15 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
 
   useEffect(() => {
     const title =
-      view === 'trash' ? 'Trash — Files' : view === 'local' ? 'Local Disk — Files' : `${path === '/' ? 'This Computer' : path.split('/').pop()} — Files`;
+      view === 'trash'
+        ? 'Trash — Files'
+        : view === 'disk'
+          ? diskPath === '/'
+            ? `${diskLabel || 'Palm Disk'} — Palm Disk`
+            : `${diskPath.split('/').pop()} — Palm Disk`
+          : `${path === '/' ? 'This Computer' : path.split('/').pop()} — Files`;
     os.window.setTitle(title);
-  }, [os, path, view]);
+  }, [diskLabel, diskPath, os, path, view]);
 
   /* --------------------------------- Data -------------------------------- */
 
@@ -126,6 +143,14 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
     if (path === '/') return;
     navigate(path.slice(0, path.lastIndexOf('/')) || '/');
   };
+
+  const diskCrumbs = useMemo(() => {
+    const parts = diskPath.split('/').filter(Boolean);
+    return [
+      { label: diskLabel || 'Palm Disk', path: '/' },
+      ...parts.map((part, index) => ({ label: part, path: `/${parts.slice(0, index + 1).join('/')}` })),
+    ];
+  }, [diskLabel, diskPath]);
 
   const breadcrumbs = useMemo(() => {
     const parts = path.split('/').filter(Boolean);
@@ -627,7 +652,8 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
           setQuery('');
         }}
         trashCount={trash.length}
-        localSupported={typeof window !== 'undefined' && 'showDirectoryPicker' in window}
+        diskStatus={diskStatus}
+        diskLabel={diskLabel}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -645,8 +671,11 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
             icon="ArrowUp"
             label="Up one level"
             size="sm"
-            disabled={view !== 'files' || path === '/'}
-            onClick={goUp}
+            disabled={view === 'disk' ? diskPath === '/' : view !== 'files' || path === '/'}
+            onClick={() => {
+              if (view === 'disk') setDiskPath(diskPath.slice(0, diskPath.lastIndexOf('/')) || '/');
+              else goUp();
+            }}
           />
           {narrow ? (
             <IconButton
@@ -674,7 +703,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
                       icon: 'Trash2',
                       onSelect: () => setView('trash'),
                     },
-                    { id: 'local', label: 'Local Disk', icon: 'Database', onSelect: () => setView('local') },
+                    { id: 'disk', label: 'Palm Disk', icon: 'Database', onSelect: () => setView('disk') },
                   ],
                 });
               }}
@@ -689,9 +718,24 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
               <span className="flex items-center gap-1.5 text-[12px] text-ink-2">
                 <Icon name="Trash2" size={13} /> Trash
               </span>
-            ) : view === 'local' ? (
-              <span className="flex items-center gap-1.5 text-[12px] text-ink-2">
-                <Icon name="Database" size={13} /> Local Disk (your real files)
+            ) : view === 'disk' ? (
+              <span className="flex min-w-0 items-center gap-0.5">
+                <Icon name="Database" size={13} className="mr-1 shrink-0 text-warn" />
+                {diskCrumbs.map((crumb, index) => (
+                  <span key={crumb.path} className="flex shrink-0 items-center">
+                    {index > 0 ? <Icon name="ChevronRight" size={11} className="mx-0.5 text-ink-3" /> : null}
+                    <button
+                      type="button"
+                      onClick={() => setDiskPath(crumb.path)}
+                      className={cn(
+                        'rounded px-1 py-0.5 text-[12px] transition-colors hover:bg-surface-3',
+                        index === diskCrumbs.length - 1 ? 'font-medium text-ink' : 'text-ink-2',
+                      )}
+                    >
+                      {crumb.label}
+                    </button>
+                  </span>
+                ))}
               </span>
             ) : (
               breadcrumbs.map((crumb, index) => (
@@ -712,7 +756,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
             )}
           </nav>
 
-          {view !== 'local' ? (
+          {view !== 'disk' || diskStatus === 'ready' ? (
             <>
               <div className="w-40 shrink-0">
                 <TextField
@@ -739,6 +783,15 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
               <IconButton icon="FolderPlus" label="New folder" size="sm" onClick={() => void createFolder()} />
               <IconButton icon="FilePlus" label="New text file" size="sm" onClick={() => void createFile()} />
             </>
+          ) : null}
+
+          {view === 'disk' && diskStatus === 'ready' ? (
+            <IconButton
+              icon="RefreshCw"
+              label="Re-read this folder from disk"
+              size="sm"
+              onClick={() => refreshDisk(diskPath)}
+            />
           ) : null}
 
           {view === 'trash' && trash.length > 0 ? (
@@ -772,8 +825,21 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
             dropActive && 'ring-2 ring-inset ring-accent/60',
           )}
         >
-          {view === 'local' ? (
-            <LocalDisk onImported={() => setSelection([])} />
+          {view === 'disk' ? (
+            <DiskView
+              path={diskPath}
+              query={query}
+              mode={mode}
+              sortKey={sortKey}
+              sortDirection={sortDirection}
+              selected={diskSelected}
+              onSelect={setDiskSelected}
+              onNavigate={(next) => {
+                setDiskPath(next);
+                setDiskSelected(null);
+              }}
+              onOpen={openDiskEntry}
+            />
           ) : items.length === 0 ? (
             <EmptyState
               icon={view === 'trash' ? 'Trash2' : query ? 'Search' : 'Folder'}
@@ -838,7 +904,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
         </div>
 
         {/* ----------------------------- Status bar ---------------------------- */}
-        {view !== 'local' ? (
+        {view !== 'disk' ? (
           <div
             role="status"
             className="flex shrink-0 items-center justify-between gap-3 border-t border-edge/8 bg-surface-2/40 px-3 py-1.5 text-[11px] text-ink-3"

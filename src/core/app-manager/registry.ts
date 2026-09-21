@@ -22,6 +22,17 @@ export function registerApps(definitions: AppDefinition[]): void {
   for (const definition of definitions) registerApp(definition);
 }
 
+/**
+ * Remove an application from the registry.
+ *
+ * Only dynamically registered applications are ever unregistered — an archived
+ * web application that has been uninstalled. Without this it would keep
+ * appearing in search and the start menu until the page was reloaded.
+ */
+export function unregisterApp(id: string): boolean {
+  return registry.delete(id);
+}
+
 export function getApp(id: string): AppDefinition | undefined {
   return registry.get(id);
 }

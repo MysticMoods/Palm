@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontScale: 1,
   alwaysShowFocusRing: false,
 
+  welcomeCompleted: false,
   searchShortcut: 'Ctrl+Space',
   snapAssist: true,
   confirmBeforeTrash: false,

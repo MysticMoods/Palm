@@ -42,6 +42,8 @@ export interface Settings {
   alwaysShowFocusRing: boolean;
 
   /* --------------------------------- System --------------------------- */
+  /** False until the first-run welcome has been completed or skipped. */
+  welcomeCompleted: boolean;
   searchShortcut: string;
   snapAssist: boolean;
   confirmBeforeTrash: boolean;

@@ -8,7 +8,7 @@
  *
  * This filesystem is entirely virtual: it lives in the browser's IndexedDB and
  * has no relationship to the host machine's disk. Real local files are reached
- * through a separate, explicitly-granted bridge — see `core/filesystem/local`.
+ * mounted as a separate volume — see `core/filesystem/disk`.
  */
 
 import { STORE, idb, transact } from '../storage/db';
@@ -546,7 +546,14 @@ class VirtualFileSystem {
     return updated;
   }
 
-  /** Irreversibly remove a node and everything under it. */
+  /**
+   * Irreversibly remove a node and everything under it.
+   *
+   * "Everything" includes descendants already in the Trash: trashing flags a
+   * node in place rather than relocating it, so a trashed file is still a
+   * child of its folder, and deleting that folder is a request to remove all
+   * of it.
+   */
   async deletePermanently(id: string): Promise<void> {
     const node = this.requireById(id);
     if (node.system) throw new FSError('EPERM', `"${node.name}" is a system folder and cannot be deleted.`);

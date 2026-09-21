@@ -32,6 +32,23 @@ interface Registered extends ShortcutBinding {
 
 const bindings = new Map<string, Registered>();
 let attached = false;
+let suspended = false;
+
+/**
+ * Suspend every global shortcut.
+ *
+ * Used while a full-screen overlay (the welcome tour) owns the keyboard: the
+ * desktop is still mounted behind it, and Alt+Tab or Super reaching it would
+ * be baffling.
+ */
+export function setShortcutsSuspended(value: boolean): void {
+  suspended = value;
+}
+
+/** For handlers that listen outside this manager, such as the bare Super key. */
+export function shortcutsSuspended(): boolean {
+  return suspended;
+}
 
 export function registerShortcut(binding: ShortcutBinding): () => void {
   bindings.set(binding.id, { ...binding, parsed: parseShortcut(binding.shortcut) });
@@ -61,6 +78,7 @@ export function listShortcuts(): ShortcutBinding[] {
 }
 
 function onKeyDown(event: KeyboardEvent) {
+  if (suspended) return;
   if (event.repeat && !event.altKey) return;
   const editable = isEditableTarget(event.target);
 

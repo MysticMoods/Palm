@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Installing</title>
+<meta name="robots" content="noindex">
+<style>body{margin:0;background:transparent}</style>
+</head>
+<body>
+<!--
+  The install target for one application origin.
+
+  Palm OS loads this in a hidden frame at `<app origin>/_papp/installer.html`
+  and hands the archive across with postMessage. Writing the bytes from in
+  here is what puts them in the *application's* storage rather than the OS's —
+  Palm OS has no way to write to this origin directly, which is precisely the
+  property being bought.
+-->
+<script type="module" src="/_papp/installer.js"></script>
+</body>
+</html>

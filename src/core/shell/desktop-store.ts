@@ -86,5 +86,8 @@ export async function hydrateDesktop(): Promise<void> {
         sortMode: persisted.sortMode ?? 'manual',
       });
     },
+    // Icon positions settle the moment a drag ends; a delay here only risks
+    // losing the layout to a reload that follows it.
+    debounceMs: 0,
   });
 }

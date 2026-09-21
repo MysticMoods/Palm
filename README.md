@@ -17,13 +17,35 @@ npm run dev      # http://localhost:5173
 Other scripts:
 
 ```bash
-npm run build    # type-check and produce dist/
-npm run preview  # serve the production build on :4173
-npm run lint     # oxlint
+npm run build     # type-check and produce dist/
+npm run preview   # serve the production build on :4173
+npm run serve     # serve dist/ with the standalone server
+npm run test      # unit tests (Vitest)
+npm run test:e2e  # end-to-end tests (Playwright)
+npm run lint      # oxlint
 ```
 
-Requires Node 20 or newer. There is nothing to configure and no service to run:
-open the URL and the OS boots, seeding a filesystem on first launch.
+Before the first `test:e2e` run, install the browser once:
+`npx playwright install firefox`.
+
+Requires Node 20 or newer. Nothing to configure: open the URL and the OS boots,
+seeding a filesystem on first launch.
+
+`dev`, `preview` and `serve` all mount the same small Node service. It fetches
+URLs for the archiver, and it routes by `Host` so each installed application
+gets its own origin — `http://app-7f31c2a4b901.localhost:5173`. The desktop
+itself is entirely client-side and will run from any static host; installed
+applications are what need the service. See
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## First run
+
+The first time you open it, Palm OS runs a four-step welcome: your name and
+avatar, then theme, accent colour and wallpaper. Every choice applies live —
+the background behind the card *is* the desktop wallpaper — and finishing
+dissolves the card to reveal the desktop already wearing them.
+
+Skip it at any point, or run it again from Settings ▸ System.
 
 ## What's in it
 
@@ -41,13 +63,36 @@ broken app cannot take the desktop down.
 Calculator, Image Viewer, Media Player, System Monitor, Settings and an App
 Store. Each is lazily loaded as its own bundle.
 
+**Palm Disk** — connect a real folder from your computer and work in it inside
+the OS: browse it, open files in the Text Editor, Image Viewer and Media
+Player, edit and save them, and create new files and folders. It is kept
+deliberately distinct from the virtual filesystem, and never deletes, renames
+or moves anything on your disk. Chromium-only; see below.
+
+**Installed web applications** — archive a self-contained web application from
+a URL (App Store ▸ Web applications, or `fetchsite <url>` in the Terminal) and
+run it later with no network at all.
+
+Each one is installed onto **its own origin** — `app-7f31c2a4b901.palm.example`
+— with its own storage, its own service worker and its own permissions. That is
+what keeps somebody else's JavaScript away from your files and settings: not a
+sandbox attribute, but the browser's same-origin policy. Network access is off
+by default, and every archive carries a status (`COMPLETE`, `PARTIAL`,
+`ONLINE_REQUIRED`, `FAILED`) that names what is missing rather than implying it
+works offline when it does not.
+
+This needs a deployment that can route by Host — see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Where that is unavailable, installing
+is disabled with an explanation rather than falling back to the OS's origin.
+
 ## Keyboard
 
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl + Space` | System search (configurable in Settings ▸ Accessibility) |
 | `Super` | Start menu |
-| `Alt + Tab` / `Alt + Shift + Tab` | Cycle windows |
+| `Alt + Tab` / `Alt + Shift + Tab` | Window switcher — hold Alt, Tab to step, release to switch |
+| `Ctrl + Alt + W` | Window switcher, when your desktop grabs Alt+Tab |
 | `Alt + F4` | Close the active window |
 | `Super + ←` / `Super + →` | Snap left / right |
 | `Super + ↑` / `Super + ↓` | Maximise / restore |
@@ -82,6 +127,7 @@ src/
 │   └── os.ts           The OS API applications talk to
 │
 ├── desktop/           The shell: desktop, taskbar, panels, window chrome
+│   └── Welcome/       First-run setup tour
 ├── apps/              One folder per application (manifest + UI)
 ├── components/        Reusable UI primitives and the icon registry
 ├── hooks/             Cross-cutting React hooks
@@ -134,6 +180,10 @@ os.window.setTitle('Weather — Lisbon');
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the pieces fit together
+- [docs/SECURITY.md](docs/SECURITY.md) — the origin boundary, the permission
+  model, and what Palm OS will not do to make a website appear to work
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — wildcard DNS, certificates and
+  reverse-proxy configuration for per-application origins
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — what a browser will not let a web
   page do, and what Palm OS does instead
 - [docs/TESTING.md](docs/TESTING.md) — what was verified and how
@@ -145,9 +195,16 @@ application data live in this browser's IndexedDB on this device. Settings ▸
 System exports the whole thing as a single JSON file and imports it back.
 Settings ▸ Privacy ▸ Reset erases it.
 
-Palm OS cannot see your real files unless you explicitly grant a folder in
-Files ▸ Local Disk, which uses the File System Access API and works only in
-Chromium-based browsers.
+Installing a web application is the one operation that contacts a server: the
+URL you give it is fetched by `server/`, which does not log, store or forward
+anything and sends no cookies or credentials. Everything it downloads is stored
+locally, in that application's own origin — which Palm OS itself cannot read,
+and which is therefore not part of a backup.
+
+Palm OS cannot see your real files unless you explicitly connect a folder in
+Files ▸ Palm Disk. That uses the File System Access API, so it works only in
+Chromium-based browsers, and access extends to exactly the folder you pick —
+nothing else. Eject it at any time from Settings ▸ Storage.
 
 ## Licence
 

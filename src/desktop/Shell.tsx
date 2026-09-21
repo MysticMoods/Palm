@@ -15,6 +15,7 @@ import { COMPACT_TASKBAR_THICKNESS, TASKBAR_THICKNESS, Taskbar } from './Taskbar
 import { Toasts } from './Toasts';
 import { useGlobalShortcuts } from './useGlobalShortcuts';
 import { WindowLayer } from './Window/WindowLayer';
+import { WindowSwitcher } from './Window/WindowSwitcher';
 
 /**
  * The desktop shell.
@@ -90,6 +91,7 @@ export function Shell() {
       {panel === 'quick-settings' ? <QuickSettings /> : null}
       {panel === 'calendar' ? <CalendarPanel /> : null}
 
+      <WindowSwitcher />
       <Toasts />
       <ContextMenuHost />
       <PermissionDialog />

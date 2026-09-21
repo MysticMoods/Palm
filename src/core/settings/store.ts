@@ -71,12 +71,21 @@ export function useSetting<K extends keyof Settings>(key: K): Settings[K] {
 }
 
 export async function hydrateSettings(): Promise<void> {
+  /*
+   * Written without a debounce, unlike the higher-frequency stores.
+   *
+   * Preferences change at human speed, so coalescing buys nothing — while the
+   * delay is long enough to lose a change to a reload that follows it: the
+   * pagehide flush can only *start* an IndexedDB write, and that write will not
+   * complete while the page is tearing down.
+   */
   await attachPersistence(useSettingsStore, {
     namespace: NS.settings,
     key: 'settings',
     pick: (state) => state.settings,
     merge: (persisted) =>
       useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...persisted } }),
+    debounceMs: 0,
   });
   await attachPersistence(useSettingsStore, {
     namespace: NS.user,
@@ -84,6 +93,7 @@ export async function hydrateSettings(): Promise<void> {
     pick: (state) => state.profile,
     merge: (persisted) =>
       useSettingsStore.setState({ profile: { ...DEFAULT_PROFILE, ...persisted } }),
+    debounceMs: 0,
   });
   useSettingsStore.setState({ hydrated: true });
 }

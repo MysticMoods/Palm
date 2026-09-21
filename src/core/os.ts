@@ -14,6 +14,7 @@
 import { getApp, launchableApps } from './app-manager/registry';
 import { useAppStore } from './app-manager/store';
 import { clipboard, useClipboardStore } from './clipboard/store';
+import type { DiskEntry } from './filesystem/disk';
 import { categoryForMime, isTextMime } from './filesystem/mime';
 import * as path from './filesystem/path';
 import { FSError, ROOT_ID, vfs } from './filesystem/vfs';
@@ -73,7 +74,7 @@ export function openApp(appId: string, options: LaunchOptions = {}): string | nu
     minWidth: defaults.minWidth,
     minHeight: defaults.minHeight,
     resizable: defaults.resizable ?? true,
-    props: options.params ?? {},
+    props: { ...app.props, ...options.params },
     singleton: options.forceNew ? false : (defaults.singleton ?? false),
     maximized: compact,
   };
@@ -123,6 +124,43 @@ export function openWith(appId: string, node: FSNode): string | null {
   return openApp(appId, { params: { path: vfs.pathOf(node.id), nodeId: node.id } });
 }
 
+/**
+ * Open a file that lives on Palm Disk rather than in the virtual filesystem.
+ *
+ * Applications receive `volume: 'disk'` alongside the path so they read
+ * through the right filesystem, and so they can say plainly that the file is
+ * a real one on the user's machine — currently opened read-only.
+ */
+export function openDiskFile(entry: DiskEntry): string | null {
+  if (entry.kind === 'folder') {
+    return openApp('files', { params: { view: 'disk', diskPath: entry.path } });
+  }
+
+  const category = categoryForMime(entry.mime);
+  const settings = getSettings();
+  const store = useAppStore.getState();
+  const preferred = settings.defaultApps[category];
+
+  const appId =
+    (preferred && getApp(preferred) && store.isInstalled(preferred) ? preferred : undefined) ??
+    launchableApps().find(
+      (app) =>
+        store.isInstalled(app.id) &&
+        (app.handlesMime?.includes(entry.mime) || app.handles?.includes(category)),
+    )?.id ??
+    (isTextMime(entry.mime) ? 'text-editor' : undefined);
+
+  if (!appId) {
+    notifications.push('system', {
+      title: 'No application available',
+      body: `Nothing installed can open "${entry.name}".`,
+    });
+    return null;
+  }
+
+  return openApp(appId, { params: { path: entry.path, volume: 'disk', readOnly: true } });
+}
+
 /* --------------------------------------------------------------------- *
  * System-level API
  * --------------------------------------------------------------------- */
@@ -131,6 +169,7 @@ export const OS = {
   openApp,
   openFile,
   openWith,
+  openDiskFile,
 
   notify: (options: NotifyOptions & { appId?: string }) =>
     notifications.push(options.appId ?? 'system', options),

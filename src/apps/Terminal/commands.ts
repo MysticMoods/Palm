@@ -16,6 +16,9 @@ import type { FSNode } from '../../core/filesystem/types';
 import { estimateStorage } from '../../core/storage/db';
 import { getProfile, getSettings } from '../../core/settings/store';
 import { OS } from '../../core/os';
+import { siteAppId, useSitesStore } from '../../core/sites/store';
+import { statusLabel, statusSummary } from '../../core/sites/manifest';
+import { appOrigin } from '../../core/sites/origin';
 import { useWindowStore } from '../../core/window-manager/store';
 import { formatBytes, formatDate } from '../../utils/format';
 import { parseFlags } from './parser';
@@ -727,6 +730,91 @@ define({
     if (args.length === 0) return fail('notify: missing title');
     OS.notify({ appId: 'terminal', title: args[0], body: args.slice(1).join(' ') || undefined });
     return {};
+  },
+});
+
+define({
+  name: 'fetchsite',
+  summary: 'Install a web application so it can be used offline',
+  usage: 'fetchsite <url> [name] [--no-capture]',
+  run: async ({ args }) => {
+    if (!args[0]) {
+      return fail('fetchsite: give an address, e.g. fetchsite https://excalidraw.com');
+    }
+    const { long, positional } = parseFlags(args);
+    if (!positional[0]) {
+      return fail('fetchsite: give an address, e.g. fetchsite https://excalidraw.com');
+    }
+    const [url, ...rest] = positional;
+    const name = rest.join(' ').trim() || undefined;
+
+    const manifest = await useSitesStore
+      .getState()
+      .install(url, { name, captureRuntime: !long.has('no-capture') });
+    if (!manifest) return fail(`fetchsite: could not install ${url}`);
+
+    const origin = appOrigin(manifest.id);
+    const lines = [
+      `Installed "${manifest.name}" from ${manifest.primaryHost}`,
+      `  ${manifest.fileCount} files, ${(manifest.bytes / 1024).toFixed(0)} KB`,
+      `  status: ${statusLabel(manifest.status)} — ${statusSummary(manifest)}`,
+      `  origin: ${origin ?? 'unavailable'}`,
+    ];
+    if (manifest.missingResources.length > 0) {
+      lines.push(
+        `  ${manifest.missingResources.length} resource${manifest.missingResources.length === 1 ? '' : 's'} could not be archived:`,
+        ...manifest.missingResources.slice(0, 5).map((entry) => `    ${entry.url} (${entry.reason})`),
+      );
+    }
+    lines.push('', `Run it with: apps --launch ${siteAppId(manifest.id)}`);
+    return { stdout: lines.join('\n') };
+  },
+});
+
+define({
+  name: 'sites',
+  summary: 'List installed web applications',
+  usage: 'sites [--remove <id>] [--origins]',
+  run: async ({ args }) => {
+    const { long, positional } = parseFlags(args);
+    const store = useSitesStore.getState();
+
+    if (long.has('remove') || positional[0] === 'remove') {
+      const id = positional[positional[0] === 'remove' ? 1 : 0];
+      const target = store.installed.find(
+        (manifest) => manifest.id === id || manifest.primaryHost === id,
+      );
+      if (!target) return fail(`sites: no installed application matching "${id ?? ''}"`);
+      await store.uninstall(target.id);
+      return { stdout: `Removed "${target.name}".` };
+    }
+
+    if (store.installed.length === 0) {
+      return { stdout: 'No applications installed. Use "fetchsite <url>" to add one.' };
+    }
+
+    // Each application is on its own origin; showing them makes that concrete
+    // rather than something the user has to take on trust.
+    if (long.has('origins')) {
+      return {
+        stdout: store.installed
+          .map((manifest) => `  ${manifest.name}\n    ${appOrigin(manifest.id) ?? 'unavailable'}`)
+          .join('\n'),
+      };
+    }
+
+    const width = Math.max(...store.installed.map((manifest) => manifest.name.length)) + 2;
+    return {
+      stdout: store.installed
+        .map(
+          (manifest) =>
+            `  ${manifest.name.padEnd(width)}${manifest.primaryHost.padEnd(24)}` +
+            `${statusLabel(manifest.status).padEnd(16)}` +
+            `${manifest.permissions.includes('NETWORK') ? 'online ' : 'offline'}` +
+            `${formatBytes(manifest.bytes).padStart(9)}  ${manifest.id}`,
+        )
+        .join('\n'),
+    };
   },
 });
 

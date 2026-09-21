@@ -6,6 +6,7 @@ import type { AppProps } from '../../core/app-manager/types';
 import { useFsRevision } from '../../core/filesystem/useFs';
 import { vfs } from '../../core/filesystem/vfs';
 import type { FSNode } from '../../core/filesystem/types';
+import { disk } from '../../core/filesystem/disk-store';
 import { useOS } from '../../desktop/app-context';
 import { usePermissionGate } from '../../desktop/use-permission';
 import { cn } from '../../utils/cn';
@@ -14,7 +15,9 @@ import { formatBytes } from '../../utils/format';
 
 const ZOOM_STEPS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8];
 
-export default function ImageViewerApp({ params }: AppProps<{ path?: string; nodeId?: string }>) {
+export default function ImageViewerApp({
+  params,
+}: AppProps<{ path?: string; nodeId?: string; volume?: 'vfs' | 'disk' }>) {
   const { os } = useOS();
   const revision = useFsRevision();
   const ensureFilesystem = usePermissionGate('filesystem', 'Open images stored in your Palm OS filesystem.');
@@ -32,6 +35,9 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
 
+  /* A real file on Palm Disk has no filesystem node behind it. */
+  const onDisk = params?.volume === 'disk';
+  const diskPath = onDisk ? (params?.path ?? null) : null;
   const node = currentId ? vfs.getNode(currentId) : null;
 
   /** Sibling images in the same folder, for previous/next. */
@@ -51,8 +57,40 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
     else if (params?.path) setCurrentId(vfs.nodeAt(params.path)?.id ?? null);
   }, [params?.nodeId, params?.path]);
 
+  /* Palm Disk images load straight from the real file. */
+  useEffect(() => {
+    if (!diskPath) return;
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    disk
+      .createObjectURL(diskPath)
+      .then((created) => {
+        if (cancelled) {
+          URL.revokeObjectURL(created);
+          return;
+        }
+        objectUrl = created;
+        setUrl(created);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [diskPath]);
+
   /* Object URLs must be revoked, or every image change leaks a blob. */
   useEffect(() => {
+    if (diskPath) return;
     if (!currentId) {
       setUrl(null);
       return;
@@ -90,11 +128,12 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [currentId, ensureFilesystem]);
+  }, [currentId, diskPath, ensureFilesystem]);
 
   useEffect(() => {
-    os.window.setTitle(node ? `${node.name} — Image Viewer` : 'Image Viewer');
-  }, [node, os]);
+    const name = diskPath ? diskPath.split('/').pop() : node?.name;
+    os.window.setTitle(name ? `${name} — Image Viewer` : 'Image Viewer');
+  }, [diskPath, node, os]);
 
   /* Reset the view whenever a different image is shown. */
   useEffect(() => {
@@ -196,7 +235,7 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
     }
   };
 
-  if (!node) {
+  if (!node && !diskPath) {
     return (
       <EmptyState
         icon="Image"
@@ -206,12 +245,26 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
     );
   }
 
+  const displayName = diskPath ? (diskPath.split('/').pop() ?? '') : (node?.name ?? '');
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface" onKeyDown={onKeyDown} tabIndex={-1}>
       {/* -------------------------------- Toolbar ------------------------------ */}
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-edge/8 px-2 py-1.5">
-        <IconButton icon="ChevronLeft" label="Previous image" size="sm" disabled={siblings.length < 2} onClick={() => step(-1)} />
-        <IconButton icon="ChevronRight" label="Next image" size="sm" disabled={siblings.length < 2} onClick={() => step(1)} />
+        <IconButton
+          icon="ChevronLeft"
+          label="Previous image"
+          size="sm"
+          disabled={!!diskPath || siblings.length < 2}
+          onClick={() => step(-1)}
+        />
+        <IconButton
+          icon="ChevronRight"
+          label="Next image"
+          size="sm"
+          disabled={!!diskPath || siblings.length < 2}
+          onClick={() => step(1)}
+        />
         <div className="mx-1 h-5 w-px bg-edge/12" aria-hidden="true" />
         <IconButton icon="ZoomOut" label="Zoom out" size="sm" onClick={() => zoomBy(-1)} />
         <span className="w-12 text-center text-[11.5px] tabular-nums text-ink-3">
@@ -246,24 +299,35 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
         <IconButton icon="Maximize2" label="Fullscreen" size="sm" onClick={() => void toggleFullscreen()} />
 
         <span className="mx-2 min-w-0 flex-1 truncate text-center text-[12px] text-ink-2">
-          {node.name}
-          {siblings.length > 1 ? (
+          {displayName}
+          {diskPath ? (
+            <span className="text-ink-3"> · Palm Disk</span>
+          ) : siblings.length > 1 ? (
             <span className="text-ink-3"> · {index + 1} of {siblings.length}</span>
           ) : null}
         </span>
 
         <IconButton
           icon="Palette"
-          label="Set as wallpaper"
+          label={diskPath ? 'Wallpapers must live in the Palm OS filesystem' : 'Set as wallpaper'}
           size="sm"
-          onClick={() => os.settings.set('wallpaper', { kind: 'image', src: `vfs:${node.id}`, fit: 'cover' })}
+          disabled={!node}
+          onClick={() =>
+            node && os.settings.set('wallpaper', { kind: 'image', src: `vfs:${node.id}`, fit: 'cover' })
+          }
         />
         <IconButton
           icon="FolderOpen"
           label="Show in Files"
           size="sm"
           onClick={() =>
-            os.openApp('files', { params: { path: node.parentId ? vfs.pathOf(node.parentId) : '/' } })
+            diskPath
+              ? os.openApp('files', {
+                  params: { view: 'disk', diskPath: diskPath.slice(0, diskPath.lastIndexOf('/')) || '/' },
+                })
+              : os.openApp('files', {
+                  params: { path: node?.parentId ? vfs.pathOf(node.parentId) : '/' },
+                })
           }
         />
       </div>
@@ -293,7 +357,7 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
         ) : url ? (
           <img
             src={url}
-            alt={node.name}
+            alt={displayName}
             onLoad={(event) =>
               setNatural({
                 width: event.currentTarget.naturalWidth,
@@ -321,7 +385,8 @@ export default function ImageViewerApp({ params }: AppProps<{ path?: string; nod
         className="flex shrink-0 items-center justify-between gap-3 border-t border-edge/8 bg-surface-2/40 px-3 py-1.5 text-[11px] text-ink-3"
       >
         <span>
-          {natural ? `${natural.width} × ${natural.height}` : '—'} · {formatBytes(node.size)}
+          {natural ? `${natural.width} × ${natural.height}` : '—'}
+          {node ? ` · ${formatBytes(node.size)}` : ' · real file on your computer'}
         </span>
         <span>Scroll with Ctrl to zoom · R rotates · F fullscreen · 0 resets</span>
       </div>

@@ -67,6 +67,171 @@ React binds to it through `useFs.ts`, which exposes a revision counter via
 `useSyncExternalStore`. Components derive what they need from that number, so
 the snapshot comparison is a single integer.
 
+## Palm Disk
+
+A real host folder, mounted as a second volume. It is deliberately *not* part
+of the virtual filesystem, because the two have different guarantees: the VFS
+is transactional, always available and private to this origin, while a real
+folder can be edited behind our back, vanishes when permission lapses, and has
+no atomic write.
+
+`disk.ts` holds the volume, `disk-store.ts` the permission dance, and both are
+written against a structural handle interface rather than the DOM types — which
+is what lets `disk.test.ts` drive the whole thing against an in-memory fake. The
+File System Access API is Chromium-only and cannot be exercised in a headless
+test run, so without that seam the volume logic would be unverifiable.
+
+Directories are listed on demand and cached, never walked at mount: pointing
+this at a folder containing `node_modules` must not freeze the OS. Search walks
+live within bounded limits and reports when it truncated, since there is no
+index to consult.
+
+Applications receive `volume: 'disk'` in their launch parameters and read
+through the volume instead of the VFS. `OS.openDiskFile` picks the handler the
+same way `OS.openFile` does.
+
+Writing is scoped to what can be done safely: edit, create file, create folder.
+Delete, rename and move are absent from the volume's API rather than guarded by
+a dialog, because there is no Trash on a real disk to undo them. Permission is
+escalated on first write — mounting asks only for `read` — and asks the *live
+mounted handle*, not the one in storage: remembering the folder is best-effort,
+and a failure to persist must not make a working volume unwritable.
+
+## Installed web applications
+
+A web application archived into Palm OS runs on **its own origin**. That is the
+one fact the rest of this section serves, and it is not a detail:
+
+```
+https://palm.example/                    Palm OS
+https://app-7f31c2a4b901.palm.example/   one installed application
+```
+
+An earlier design served archives from `/site/<id>/` on the OS's own origin.
+That worked, and it meant an archived application could open Palm OS's
+IndexedDB and read the user's files. Origin separation replaces a promise with
+something the browser enforces. See [SECURITY.md](SECURITY.md).
+
+### Where the pieces are
+
+```
+shared/origins.mjs      origin algebra, used by the server and the browser
+shared/app-policy.mjs   the security headers an application origin gets
+server/app-origin.mjs   routes by Host; never serves Palm OS on an app host
+public/_papp/sw.js      one application's service worker, on its origin
+public/_papp/installer  the only way bytes get into an application's storage
+public/_papp/bridge.js  the `PalmOS` object an application sees
+src/core/sites/         archiving, installing, validating, manifests
+```
+
+`shared/` exists because the origin rules have to hold identically on the
+server (routing a request) and in the browser (pointing a frame). One
+implementation, tested once, imported by both — a request routed one way and
+framed another would be a hole, not a bug.
+
+### Installing
+
+```
+archive → write into the application's own origin → start it once
+        → fold what it actually asked for back into the manifest → publish
+```
+
+Palm OS cannot write to another origin, so installing means loading
+`/_papp/installer.html` *on* that origin in a hidden frame and handing the
+archive across with `postMessage`. Both ends check the other, exactly, by
+origin and by window identity.
+
+The third step is the one that makes the status honest. A modern bundle decides
+at runtime what to load, so an archive built from static analysis alone is a
+guess. Starting the application in its own origin and recording what its
+service worker could not serve is the only way to know — and measurement
+against a real build of Excalidraw is what sized the archiver's limits.
+
+### Archiving
+
+`rewrite.ts` is the URL algebra, separated out because a mangled URL produces
+an application that is subtly broken in a way that is very hard to trace back
+from a blank screen. Resources keep the site's own paths, so a bundle asking
+for `/assets/chunk-a1f3.js` at runtime finds it; anything from another host
+goes under `/_ext/<host>/`, the one shape the original site cannot have used.
+
+`archive.ts` walks the graph six resources at a time. Serially, a four-hundred
+file application took nearly three minutes, which is long enough that people
+assume it has hung; concurrently it takes half a minute.
+
+Scripts are **read, never run**. `scanScript` finds resource literals and
+counts what it cannot follow — dynamic imports, workers, WebAssembly, the
+site's own service worker, WebSocket endpoints, API paths. Those counts are
+what separate `PARTIAL` from `ONLINE_REQUIRED`: a site that opens a socket is
+not broken, it just cannot be offline, and that is a different thing to tell
+the user.
+
+### Serving
+
+Each application's service worker (`public/_papp/sw.js`) serves its archive
+from its own origin's IndexedDB. Written as a classic worker on purpose:
+module service workers are still uneven across browsers, and an application
+that will not start is worse than a file that cannot use `import`.
+
+It also enforces the `NETWORK` permission for requests routed through the
+application's own origin, records what it could not serve, and — when network
+is permitted — fetches a miss and keeps it, which is how an archive becomes
+more complete through use. Its report is written through to storage, because a
+worker is terminated whenever the browser feels like it and a report that
+evaporated would silently turn every archive into an apparently complete one.
+
+### Status
+
+`manifest.ts` holds the rules, apart from the archiver so they are testable
+without downloading anything:
+
+| | |
+|---|---|
+| `COMPLETE` | Everything it asked for was captured. Runs with no network. |
+| `PARTIAL` | Runs, but some resources are missing. They are named. |
+| `ONLINE_REQUIRED` | The front end archived fine; it needs a server to be useful. |
+| `FAILED` | No entry document, or nothing captured. |
+
+`ONLINE_REQUIRED` beats `PARTIAL` when both apply, because the files were never
+the problem.
+
+### Migration
+
+Applications installed under the old same-origin design are moved, not deleted
+and not left running that way. The bytes are already local, so migration needs
+no network: each file is re-pathed, the `/site/<id>/` references baked into its
+HTML and CSS are rewritten, and the legacy copy is removed **only** after the
+new one is in place.
+
+## Browsing
+
+Palm OS shows a site in a window when the site permits it, and hands it to the
+real browser when it does not — decided by reading `X-Frame-Options` and
+`frame-ancestors` up front (`/_palm/frame-policy`), not by rendering a frame
+and treating silence as refusal. The old approach showed a blank rectangle for
+seven seconds and got it wrong whenever a slow site was merely slow.
+
+Sign-in and OAuth addresses are recognised and sent to the real browser
+whatever the headers say: a redirect URI is bound to a real origin, and no
+amount of proxying changes that.
+
+The headers are never stripped. `embedding.ts` holds the rules and is tested,
+including the case where the check itself fails — which resolves to *try it*,
+because a frame that fails is recoverable and a refusal that was wrong is just
+Palm OS being needlessly useless.
+
+## Fetch service
+
+`server/` is the only server-side code, and it does two things: fetch URLs on
+the browser's behalf, and route by Host so applications get their own origins.
+
+`guards.mjs` is separated from `fetch-handler.mjs` on purpose. A URL-fetching
+service is an SSRF primitive, so "may we fetch this?" is a pure, independently
+testable function taking an injected resolver — which is how `guards.test.ts`
+asserts that a *public* name resolving to a private address is rejected,
+without any network. Validation runs again on every redirect hop, because a
+redirect is a second, unvalidated URL.
+
 ## Window manager
 
 Windows are plain records with a rectangle, a mode (`normal`, `minimized`,
@@ -84,6 +249,11 @@ Two details worth knowing:
 - The entrance animation lives on the inner layer, never the frame. A keyframe
   ending at `transform: none` with `fill: both` would permanently override the
   frame's inline transform and pin every window to the top-left corner.
+
+The switcher freezes a most-recently-used order when the gesture begins and
+steps a cursor through it. It has to freeze: `focus()` raises z-index, so
+re-deriving the order on each press would destroy the sequence being stepped
+through.
 
 Below `COMPACT_BREAKPOINT` (820px) the manager switches to a phone-like mode:
 every window is full-screen, dragging and resizing are disabled, and the
@@ -149,6 +319,38 @@ whole interface without re-rendering React.
 Accessibility settings are also attributes: `data-contrast="high"`,
 `data-motion="reduced"`, `data-focus-ring="always"`, plus `--os-scale` for
 interface scaling.
+
+## First-run welcome
+
+`desktop/Welcome/` renders over a live desktop rather than instead of one. That
+is what lets a wallpaper or accent chosen during setup apply immediately —
+`useSettingsStore.set` already drives `applySettings`, so the backdrop behind
+the card is the real thing — and lets finishing simply dissolve the overlay to
+reveal a desktop that already matches.
+
+Because the shell is mounted underneath, global shortcuts are suspended for the
+duration (`setShortcutsSuspended`); Super or Alt+Tab reaching the desktop
+through a modal would be baffling. The overlay traps focus, Escape skips, and
+`settings.welcomeCompleted` records that it has run. Settings ▸ System clears
+that flag to replay it.
+
+## Testing seams
+
+The core is deliberately free of DOM and React dependencies, which is what lets
+`npm run test` run it in plain Node. Stores are Zustand, so a test drives them
+through `useWindowStore.getState()` with no renderer; the filesystem needs only
+`fake-indexeddb`. Anything requiring a DOM opts in per file with
+`// @vitest-environment jsdom`.
+
+Two seams exist specifically so that browser-only behaviour stays testable:
+
+- `DiskVolume` is written against a structural handle interface rather than the
+  DOM's `FileSystemDirectoryHandle`, so `fake-handles.ts` can drive it.
+- The end-to-end suite installs an in-memory `showDirectoryPicker` before the
+  page loads, so the real mount and write paths run unchanged.
+
+`e2e/` drives the production bundle with Playwright. `playwright.config.ts`
+builds and serves it, so the tests can never run against a stale `dist`.
 
 ## Boot
 

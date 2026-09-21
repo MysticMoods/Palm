@@ -13,7 +13,9 @@ interface SidebarProps {
   onNavigate: (path: string) => void;
   onOpenView: (view: FilesView) => void;
   trashCount: number;
-  localSupported: boolean;
+  /** Mount state of Palm Disk, shown next to the entry. */
+  diskStatus: string;
+  diskLabel: string;
 }
 
 export function Sidebar({
@@ -23,8 +25,18 @@ export function Sidebar({
   onNavigate,
   onOpenView,
   trashCount,
-  localSupported,
+  diskStatus,
+  diskLabel,
 }: SidebarProps) {
+  const diskHint =
+    diskStatus === 'ready'
+      ? `Connected · ${diskLabel}`
+      : diskStatus === 'needs-permission'
+        ? 'Tap to reconnect'
+        : diskStatus === 'unsupported'
+          ? 'Not available in this browser'
+          : 'No folder connected';
+
   return (
     <nav
       aria-label="Places"
@@ -71,15 +83,11 @@ export function Sidebar({
       <Group label="Real disk">
         <Item
           icon="Database"
-          label="Local Disk"
-          active={view === 'local'}
-          onClick={() => onOpenView('local')}
+          label={diskStatus === 'ready' && diskLabel ? diskLabel : 'Palm Disk'}
+          active={view === 'disk'}
+          onClick={() => onOpenView('disk')}
         />
-        <p className="px-2 pb-1 pt-1 text-[10.5px] leading-snug text-ink-3">
-          {localSupported
-            ? 'Files on your actual computer. Access must be granted per folder.'
-            : 'Your browser cannot grant folder access; import and download are used instead.'}
-        </p>
+        <p className="px-2 pb-1 pt-1 text-[10.5px] leading-snug text-ink-3">{diskHint}</p>
       </Group>
     </nav>
   );

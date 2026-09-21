@@ -5,9 +5,10 @@ import { ConfirmDialog, Modal } from '../../../components/ui/Modal';
 import { backupFilename, createBackup, parseBackupFile, restoreBackup } from '../../../core/backup';
 import type { ValidationResult } from '../../../core/backup';
 import { resetPalmOS } from '../../../core/boot';
-import { downloadBlob, pickFilesFallback } from '../../../core/filesystem/local';
+import { downloadBlob, pickFiles } from '../../../core/filesystem/transfer';
 import { notifications } from '../../../core/notifications/store';
 import { OS_CODENAME, OS_NAME, OS_VERSION } from '../../../core/settings/defaults';
+import { useSettingsStore } from '../../../core/settings/store';
 import { estimateStorage } from '../../../core/storage/db';
 import { formatBytes, formatDate } from '../../../utils/format';
 import { InfoList, Row, Section } from '../Layout';
@@ -44,7 +45,7 @@ export function SystemSection() {
   };
 
   const chooseBackup = async () => {
-    const [file] = await pickFilesFallback('application/json,.json', false);
+    const [file] = await pickFiles('application/json,.json', false);
     if (!file) return;
     setImporting(true);
     try {
@@ -116,6 +117,22 @@ export function SystemSection() {
           control={
             <Button variant="secondary" icon="Upload" loading={importing} onClick={chooseBackup}>
               Choose file…
+            </Button>
+          }
+        />
+      </Section>
+
+      <Section title="Welcome tour" description="The first-run setup for your name, avatar and appearance.">
+        <Row
+          label="Run the welcome tour again"
+          description="Reopens the setup screens. Nothing is erased — you can change the same things here any time."
+          control={
+            <Button
+              variant="secondary"
+              icon="Sparkles"
+              onClick={() => useSettingsStore.getState().set('welcomeCompleted', false)}
+            >
+              Show it again
             </Button>
           }
         />

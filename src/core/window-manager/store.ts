@@ -28,6 +28,8 @@ interface WindowManagerState {
   remembered: Record<string, Rect>;
   /** True when the viewport is too narrow for free-floating windows. */
   compact: boolean;
+  /** Active Alt+Tab gesture, or `null`. */
+  switcher: SwitcherState | null;
 
   open: (options: OpenWindowOptions) => string;
   close: (id: string) => void;
@@ -47,13 +49,36 @@ interface WindowManagerState {
   setCloseGuard: (id: string, guard: boolean) => void;
   setCrash: (id: string, crash: WindowCrash | null) => void;
   restartWindow: (id: string) => void;
-  cycleFocus: (direction: 1 | -1) => void;
+  beginSwitch: (direction: 1 | -1, sticky: boolean) => void;
+  moveSwitch: (direction: 1 | -1) => void;
+  setSwitchIndex: (index: number) => void;
+  commitSwitch: () => void;
+  cancelSwitch: () => void;
   minimizeAll: () => void;
   rememberBounds: (appId: string, rect: Rect) => void;
   setCompact: (compact: boolean) => void;
 }
 
 const DEFAULT_AREA: Rect = { x: 0, y: 0, width: 1280, height: 720 };
+
+/**
+ * A window-switching gesture in progress.
+ *
+ * `order` is frozen when the gesture starts. It has to be: focusing a window
+ * raises its z-index, so re-deriving the order on every press would destroy
+ * the very sequence being stepped through — which is exactly why the old
+ * implementation could never reach past the second window.
+ */
+export interface SwitcherState {
+  /** Window ids, most-recently-used first, fixed for the gesture. */
+  order: string[];
+  index: number;
+  /**
+   * Sticky switchers stay open until confirmed, for hosts where the OS window
+   * manager swallows Alt+Tab and we never see the modifier being released.
+   */
+  sticky: boolean;
+}
 
 export const useWindowStore = create<WindowManagerState>()((set, get) => ({
   windows: [],
@@ -63,6 +88,7 @@ export const useWindowStore = create<WindowManagerState>()((set, get) => ({
   snapPreview: null,
   remembered: {},
   compact: false,
+  switcher: null,
 
   open: (options) => {
     const state = get();
@@ -140,7 +166,17 @@ export const useWindowStore = create<WindowManagerState>()((set, get) => ({
           ? (windows.filter((w) => w.mode !== 'minimized').sort((a, b) => b.zIndex - a.zIndex)[0]?.id ??
             null)
           : s.focusedId;
-      return { windows, focusedId, remembered };
+
+      let switcher = s.switcher;
+      if (switcher) {
+        const order = switcher.order.filter((entry) => entry !== id);
+        switcher =
+          order.length < 2
+            ? null
+            : { ...switcher, order, index: Math.min(switcher.index, order.length - 1) };
+      }
+
+      return { windows, focusedId, remembered, switcher };
     }),
 
   closeApp: (appId) => {
@@ -307,14 +343,49 @@ export const useWindowStore = create<WindowManagerState>()((set, get) => ({
       ),
     })),
 
-  cycleFocus: (direction) => {
-    const { windows, focusedId, focus } = get();
-    const visible = windows.slice().sort((a, b) => b.zIndex - a.zIndex);
-    if (visible.length === 0) return;
-    const index = visible.findIndex((w) => w.id === focusedId);
-    const next = visible[(index + direction + visible.length) % visible.length];
-    if (next) focus(next.id);
+  beginSwitch: (direction, sticky) =>
+    set((s) => {
+      if (s.switcher) return {};
+      // Most-recently-used order. Minimised windows are included: reaching one
+      // with the keyboard is the main reason to open the switcher at all.
+      const order = s.windows
+        .slice()
+        .sort((a, b) => b.zIndex - a.zIndex)
+        .map((w) => w.id);
+      if (order.length < 2) return {};
+      const index = direction === 1 ? 1 : order.length - 1;
+      return { switcher: { order, index, sticky } };
+    }),
+
+  moveSwitch: (direction) =>
+    set((s) => {
+      if (!s.switcher) return {};
+      const { order, index } = s.switcher;
+      return {
+        switcher: {
+          ...s.switcher,
+          index: (index + direction + order.length) % order.length,
+        },
+      };
+    }),
+
+  /** Used when the pointer hovers a tile in the switcher. */
+  setSwitchIndex: (index) =>
+    set((s) =>
+      s.switcher && index >= 0 && index < s.switcher.order.length
+        ? { switcher: { ...s.switcher, index } }
+        : {},
+    ),
+
+  commitSwitch: () => {
+    const { switcher, focus } = get();
+    if (!switcher) return;
+    const target = switcher.order[switcher.index];
+    set({ switcher: null });
+    if (target) focus(target);
   },
+
+  cancelSwitch: () => set({ switcher: null }),
 
   minimizeAll: () =>
     set((s) => ({

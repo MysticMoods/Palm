@@ -1,9 +1,38 @@
 # Testing
 
-Palm OS was verified by driving the production build in a real browser
-(headless Firefox over WebDriver BiDi) and asserting against the live DOM —
-not by inspecting source. Every item below was executed; the bugs listed at the
-end were found that way and fixed.
+Two layers, both in the repository and both run by CI.
+
+**Unit tests** (`npm run test`) cover the OS core — 447 tests across the shell
+parser, calculator engine, virtual filesystem, Palm Disk volume and its mount
+state machine, window manager, snapping geometry, path and MIME handling,
+backup validation, shortcut parsing, the contrast maths, the archiver's URL
+rewriting, archive-status rules, the origin algebra, the application security
+policy, the bridge's message validation, legacy migration, framing-header
+parsing and the fetch service's SSRF guards. They run in Node in
+about two seconds, with `fake-indexeddb` standing in for browser storage and
+jsdom only where a DOM is genuinely needed.
+
+**End-to-end tests** (`npm run test:e2e`) drive the *production build* in
+headless Firefox — 74 tests across boot, every application launching, window
+geometry and the switcher, the shell, the Files app, persistence across reload,
+the first-run tour, Palm Disk, installing web applications, browsing modes,
+migration from the previous architecture, and origin isolation. They run against the real bundle on purpose:
+the bugs worth catching at this level — stacking contexts, animation fill
+modes, lazy chunk loading — only appear there.
+
+```bash
+npm run test           # unit
+npm run test:coverage  # with a coverage summary
+npx playwright install firefox   # once
+npm run test:e2e       # builds, serves and drives the bundle itself
+```
+
+Firefox is the end-to-end target because it is the strictest of the three
+engines about the platform features Palm OS leans on, and because the
+capability fallbacks — no File System Access API — only exercise there.
+
+CI runs type-check, lint, unit tests and build in one job, and the end-to-end
+suite in another.
 
 ## What was verified
 
@@ -25,6 +54,14 @@ end were found that way and fixed.
   viewport).
 - Minimise, restore from the taskbar, maximise (fills the work area), restore
   to the previous size, `Alt + Tab` focus cycling, close-all.
+
+### Window switcher
+With five windows open, holding Alt and pressing Tab steps through **all** of
+them and wraps (`Calculator → Terminal → Files → Notes → Calculator`); the
+overlay is visible while Alt is held and commits to the highlighted window on
+release. Escape cancels without changing focus. `Ctrl+Alt+W` opens the sticky
+switcher, which survives the modifiers being released and is driven with the
+arrow keys and Enter.
 
 ### Filesystem
 - Create folder and file, inline rename, move to Trash, Trash listing, restore
@@ -62,6 +99,167 @@ All pass, plus `neofetch`, `systeminfo`, `df`, `tree`, `find`, `sudo`.
   from a blob URL at its true 1200px natural width.
 - Files, Settings, Calendar, Media Player, System Monitor and App Store all
   launch, render and respond.
+
+### Welcome tour
+- Appears on a fresh profile, not on the second boot, and can be replayed from
+  Settings ▸ System.
+- Choices apply live: selecting Teal repaints the accent (`88 132 255` →
+  `43 196 176`) and selecting Nebula swaps the full-screen wallpaper while the
+  card is still open.
+- The name field starts empty rather than pre-filled, derives a username
+  ("Ada Lovelace" → `adalovelace`) and that username shows up in the terminal
+  prompt afterwards.
+- Keyboard only: Enter advances, Tab stays inside the dialog across 12 presses,
+  Escape skips. Global shortcuts are inert while the overlay is up — Ctrl+Space
+  and Super do nothing — and work again once it closes.
+- Zero unnamed controls or unlabelled inputs; the dialog is `aria-modal` with
+  `aria-labelledby`, a labelled progress list and a live region for the step
+  count.
+- At 390×844 all four steps fit with no horizontal overflow.
+- With `prefers-reduced-motion: reduce` (set as a real Firefox preference) the
+  drifting backdrop, the floating logo, the halo and the staged reveals all
+  drop to ~0s while the content still renders.
+
+### Palm Disk
+The volume logic is unit-tested against an in-memory fake implementing the
+File System Access handle interface: listing order, nested paths, size and
+modified time, MIME fallback, caching, invalidation, bounded search, and that
+`..` resolves within the mount rather than escaping it.
+
+The mount state machine is tested with stubbed storage, covering the paths a
+headless Firefox cannot reach — a lapsed permission asking for a reconnect, a
+refusal, and a husk left in storage being ignored rather than crashing.
+
+End to end, `showDirectoryPicker` was polyfilled with an in-memory folder so
+the real code path runs unchanged: connecting mounts and labels the volume,
+the banner names it, listings and breadcrumbs work, `src/main.ts` opens in the
+Text Editor with its real contents and Save disabled, a file added outside is
+invisible until refresh and then appears, one removed outside disappears on
+window focus, and search filters. On reload with an unpersistable handle it
+prompts to connect again rather than crashing.
+
+In Firefox, which has no File System Access API, Palm Disk reports itself
+unavailable and offers file import instead.
+
+Writing was driven the same way: mounting requests no write grant, the first
+create confirms and escalates to `readwrite`, the folder and file appear, a
+second create does not re-confirm, and editing `notes.txt` in the Text Editor
+prompts *"Overwrite notes.txt on your computer?"* — the real file still holding
+its original contents until the confirmation, and the new contents after. A
+second save in the same window writes without asking again.
+
+Palm Disk is exercised end to end by installing an in-memory
+`showDirectoryPicker` before the page loads, so the real code path — mount,
+permission escalation, listing, read, write — runs unchanged against a folder
+the test controls.
+
+**Not verified here:** the real Chromium picker and a genuine browser-issued
+handle surviving a reload. Both are covered by the unit tests' stand-ins, but
+the real API was not exercised — only Firefox is available in this environment.
+
+### Fetch service
+`server/guards.test.ts` asserts the SSRF boundary against an injected resolver:
+`file:`, `javascript:` and other non-http(s) schemes, `localhost`, `.local`,
+`.internal`, every private, loopback, link-local, CGNAT and multicast range in
+v4 and v6 including `::ffff:`-mapped forms, and the two cases that matter most —
+a *public* hostname that resolves to a private address, and one that resolves to
+both a public and a private address. Both are rejected.
+
+The live service was exercised manually against the real internet as well:
+`file:///etc/passwd`, `http://localhost:5173`, `http://169.254.169.254/` and
+`javascript:alert(1)` are all refused with a reason.
+
+### Origin isolation
+`e2e/isolation.spec.ts` is the suite that matters most, and it does not check
+that the code *intends* isolation. It writes data on one side and tries to read
+it from the other:
+
+- Palm OS writes a marker to `localStorage` and has a populated `palm-os`
+  database; from inside the application, the marker reads `null` and opening
+  `palm-os` by name yields a *new, empty* database on that origin
+- application A writes to its storage; application B reads `null`, and so does
+  Palm OS
+- Palm OS holds a handle to the application's frame and cannot read its document
+- each application's service-worker registration is scoped to its own origin,
+  and no worker at all controls the Palm OS origin
+- an uninstalled application host does not serve Palm OS's document — booting a
+  second copy of the OS on an application origin would blur the boundary
+
+Verified against the real internet too: archiving `https://example.com` produced
+an application at `http://app-6d02f1e3723c.localhost:4173/index.html`, serving
+the right content with the right CSP, and reading `palm-os` from inside it
+returned an empty database.
+
+### Application policy
+The security headers are read back from inside a running application:
+`connect-src 'self' blob: data:` with no remote sources, `frame-ancestors`
+naming only the Palm OS origin, `camera=()` and friends, and `nosniff`. A
+cross-origin `fetch` from an offline application is blocked.
+
+### The application bridge
+`bridge-host.test.ts` covers the validation rules directly, including the ways
+an origin check goes wrong — a prefix match would accept
+`https://app-x.palm.example.evil.test`, and the right origin is not enough
+without the right frame. End to end: the bridge is present, a request with no
+permission is refused *with a reason* rather than left hanging, an unsupported
+request is refused, and granting the permission makes the same call succeed.
+
+### Archiving and completeness
+`rewrite.test.ts` covers the URL algebra — path layout, query-string identity,
+percent-encoding preserved exactly as the browser will ask for it, protocol-
+relative references, `srcset`, CSS `url()` and `@import`, and the script
+scanner (including that it does not execute what it reads, and does not hang on
+a very large bundle).
+
+`e2e/sites.spec.ts` drives the whole pipeline against fixture sites served by
+intercepting `/_palm/fetch`: a static site archives COMPLETE with the expected
+paths and no permissions; a site that opens a WebSocket and calls an API is
+marked ONLINE_REQUIRED with both diagnostics recorded; a site that assembles a
+request path at runtime is reported PARTIAL, by name, once it has been run.
+
+Measured against a real build of Excalidraw: 436 files in about thirty seconds,
+PARTIAL with three unreachable third-party resources named. That measurement is
+what sized the archiver's limits and drove the move from serial to concurrent
+fetching (the same archive took 2m 54s serially).
+
+### Migration from the previous architecture
+`e2e/migration.spec.ts` seeds a schema-2 record — an application archived into
+Palm OS's *own* origin under `/site/<id>/` — reloads, and asserts it was moved
+to an isolated origin, that the `/site/<id>/` references baked into its HTML
+and CSS were rewritten (checked by the stylesheet still applying), that it
+arrives with no permissions, and that the legacy records are gone. No fetch
+service is routed in that test: migration works from the bytes already on the
+device.
+
+### Browsing modes
+`e2e/browsing.spec.ts` covers the decision between embedded and normal mode. A
+site sending `X-Frame-Options: DENY` produces a panel naming that header, with
+"Open normally" and "Try embedded mode", and **no iframe at all** — rather than
+a blank rectangle. A sign-in URL goes to the real browser even when the headers
+would allow framing. Embedded mode still happens on request: the user's choice
+wins after Palm OS has stated the trade-off.
+
+**On proving "works offline":** `context.setOffline(true)` is *not* used, and
+the reason is worth recording. Firefox's offline emulation rejects the request
+before the service worker sees it, which a genuinely offline machine does not —
+there, the worker answers from storage and no request is ever made. Asserting
+through the emulation would test the harness, not the product. The test instead
+aborts every request that is not to this machine and asserts both that the
+application still runs and that the blocked list is empty.
+
+**Not verified here:** a successful runtime *capture* through the fetch
+service. Playwright's request interception does not reach service-worker-
+initiated requests in Firefox, so a fixture cannot answer the worker's fetch.
+What is verified is everything around it: the capture run happens, network
+permission is dropped again afterwards, and the resource it could not get is
+named in a PARTIAL archive. The capture path itself was exercised manually
+against the real internet.
+
+**Not verified here either:** long-term survival of an archive across browser
+storage eviction, and a production wildcard-DNS deployment with real
+certificates — `*.localhost` exercises the same browser behaviour (distinct
+origin, secure context, per-origin service worker) but not the DNS and TLS
+setup described in DEPLOYMENT.md.
 
 ### Crash isolation
 A deliberately throwing application was registered, built and launched. It
@@ -140,6 +338,63 @@ becomes `120 112 32` (4.95:1) for text while the fill keeps the chosen colour.
    undo stacks were mutated inside a `setState` updater, which React may run
    lazily, so the derived `canUndo`/`canRedo` flags read stacks that had not
    been touched yet. The mutations were moved out of the updater.
+10. **A modifier-only shortcut rendered as "Super + ".** `formatShortcut`
+    always appended a key label, even when the shortcut was a bare modifier.
+    This showed in the welcome tips and in Settings ▸ Accessibility.
+11. **The welcome's name field was pre-filled with "Palm User"**, so typing
+    appended to it and produced a username like `palmuseradalovel`.
+12. **Alt+Tab could not reach past the second window.** `cycleFocus` sorted by
+    z-index and then focused the next window — but focusing raises z-index, so
+    each press destroyed the ordering it had just derived. With four windows
+    open it oscillated between the two most recent and the other two were
+    unreachable by keyboard. Replaced with a frozen most-recently-used order
+    captured when the gesture starts.
+13. **Escape did not cancel a switch.** The declarative binding for Escape
+    requires no modifiers, and during a held Alt+Tab gesture Alt is by
+    definition down, so it never matched and the release committed anyway.
+
+Found by the unit suite as it was written:
+
+14. **A single `&` split an argument in two.** The tokeniser flushed the
+    current token before checking whether the character began `&&`, so
+    `echo a&b` produced two arguments instead of one.
+15. **`tildify` never abbreviated anything.** It appended a separator to the
+    home path to build its prefix — but Palm OS's home *is* the root, which
+    already ends in one, so the test was against `"//"` and always failed. The
+    terminal showed `~` at the root and absolute paths everywhere else.
+16. **`isEditableTarget` could return `undefined`** despite being typed
+    `boolean`, by returning `isContentEditable` unchecked.
+
+Found while porting the browser checks into the repository:
+
+17. **A setting could be lost by reloading straight after changing it.**
+    Preferences were written on a 250ms debounce, and the `pagehide` flush can
+    only *start* an IndexedDB write — it will not complete while the page is
+    tearing down. Changing the theme and reloading within that window silently
+    reverted it. Preferences and the desktop layout now persist without a
+    debounce; coalescing buys nothing for changes made at human speed.
+18. **`requestWrite` read the disk handle back from storage** rather than using
+    the mounted one, so a folder that could not be remembered for next session
+    became permanently unwritable in this one.
+19. **Escape did not always dismiss the welcome tour.** It was handled by a
+    React listener on the card, so it only worked while focus was inside —
+    and focus falls to `<body>` for a moment whenever a button unmounts as the
+    step changes. Moved to a window-level listener, as the window switcher
+    already does.
+20. **Granting a permission appeared not to work.** Toggling one reloaded the
+    application immediately, while the change was still on its way to that
+    application's service worker — so it restarted under the old policy and
+    the user had to reload again by hand. The reload now waits for the change
+    to land. Caught by the end-to-end test asserting a granted permission
+    actually takes effect.
+21. **The bridge asked the same question twice, in two vocabularies.** An
+    application's `notification` request was routed through the OS's
+    *built-in-application* permission system as well as its own, so a request
+    the user had already allowed in the application's permission panel was
+    refused with `"site:…" requested "notifications" which is not in its
+    manifest`. Installed applications are governed by their own permission
+    model; the bridge now applies its effects directly, with
+    `bridge-host.validate` as the single gate.
 
 ## Reproducing
 

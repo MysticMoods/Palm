@@ -8,7 +8,7 @@ import { notifications } from '../../../core/notifications/store';
 import { useNotificationStore } from '../../../core/notifications/store';
 import { usePermissionStore } from '../../../core/permissions/store';
 import { estimateStorage } from '../../../core/storage/db';
-import { forgetLocalDirectory } from '../../../core/filesystem/local';
+import { useDiskStore } from '../../../core/filesystem/disk-store';
 import { useDesktopStore } from '../../../core/shell/desktop-store';
 import { useAppStore } from '../../../core/app-manager/store';
 import { formatBytes, pluralize } from '../../../utils/format';
@@ -30,6 +30,11 @@ export function StorageSection() {
       void navigator.storage.persisted().then(setPersisted).catch(() => setPersisted(null));
     }
   }, [refresh, revision]);
+
+  const diskStatus = useDiskStore((s) => s.status);
+  const diskLabel = useDiskStore((s) => s.label);
+  const chooseDisk = useDiskStore((s) => s.choose);
+  const ejectDisk = useDiskStore((s) => s.eject);
 
   const stats = vfs.stats();
   const trash = vfs.listTrash();
@@ -151,12 +156,31 @@ export function StorageSection() {
           }
         />
         <Row
-          label="Remembered local folder"
-          description="Forget the real folder you granted access to. Your files are untouched."
+          label="Palm Disk"
+          description={
+            diskStatus === 'unsupported'
+              ? 'This browser cannot connect to a folder on your computer.'
+              : diskStatus === 'ready'
+                ? `Connected to “${diskLabel}”. Ejecting forgets the folder; your files are untouched.`
+                : diskStatus === 'needs-permission'
+                  ? `“${diskLabel}” is remembered but needs permission again after a reload.`
+                  : 'No folder on your computer is connected.'
+          }
           control={
-            <Button size="sm" variant="ghost" onClick={() => void forgetLocalDirectory()}>
-              Forget
-            </Button>
+            diskStatus === 'ready' || diskStatus === 'needs-permission' ? (
+              <Button size="sm" variant="ghost" onClick={() => void ejectDisk()}>
+                Eject
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={diskStatus === 'unsupported'}
+                onClick={() => void chooseDisk()}
+              >
+                Connect…
+              </Button>
+            )
           }
         />
         <Row
