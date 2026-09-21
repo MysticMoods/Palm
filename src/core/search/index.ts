@@ -1,12 +1,12 @@
 /**
  * System-wide search.
  *
- * Results come from independent providers so a new source (an app's data, a
+ * Results come from independent providers, so a new source (an app's data, a
  * future web index) is added without touching the search UI. Providers may be
- * async; the UI renders whatever has arrived.
+ * async; failures are logged and skipped rather than breaking the whole query.
  */
 
-import { getApp } from '../app-manager/registry';
+import { launchableApps } from '../app-manager/registry';
 import { useAppStore } from '../app-manager/store';
 import { categoryForMime, describeMime } from '../filesystem/mime';
 import { vfs } from '../filesystem/vfs';
@@ -15,7 +15,7 @@ import { SETTINGS_SECTIONS } from '../settings/sections';
 import { appNamespace, kv } from '../storage/kv';
 import { matches } from '../../utils/misc';
 
-export type SearchGroup = 'Applications' | 'Files' | 'Folders' | 'Notes' | 'Settings' | 'Actions';
+export type SearchGroup = 'Applications' | 'Files' | 'Folders' | 'Notes' | 'Settings';
 
 export interface SearchResult {
   id: string;
@@ -34,69 +34,53 @@ export interface SearchProvider {
   search: (query: string) => SearchResult[] | Promise<SearchResult[]>;
 }
 
-/** Prefix matches rank above substring matches; shorter titles win ties. */
+/**
+ * Rank a candidate. `base` separates the groups (apps before files before
+ * settings); within a group, prefix matches beat mid-word matches and shorter
+ * titles beat longer ones.
+ */
 function score(text: string, query: string, base: number): number {
   const haystack = text.toLowerCase();
-  const needle = query.toLowerCase();
-  const index = haystack.indexOf(needle);
-  if (index === -1) return base + 500;
-  return base + (index === 0 ? 0 : 50 + index) + haystack.length * 0.05;
+  const index = haystack.indexOf(query.toLowerCase());
+  if (index === -1) return base + 400;
+  return base + (index === 0 ? 0 : 40 + index) + haystack.length * 0.05;
 }
+
+const CATEGORY_ICONS: Record<string, string> = {
+  text: 'FileText',
+  code: 'FileCode',
+  image: 'FileImage',
+  audio: 'FileAudio',
+  video: 'FileVideo',
+  archive: 'FileArchive',
+  document: 'FileText',
+};
 
 const appProvider: SearchProvider = {
   id: 'apps',
   search: (query) => {
-    const installed = useAppStore.getState();
-    return OS.filesystem === undefined
-      ? []
-      : appsMatching(query).map((app) => ({
-          id: `app:${app.id}`,
-          group: 'Applications' as const,
-          title: app.name,
-          subtitle: app.description,
-          icon: app.icon,
-          color: app.color,
-          score: score(app.name, query, 0),
-          run: () => OS.openApp(app.id),
-        }))
-        .filter(() => true)
-        .filter((result) => installed.isInstalled(result.id.slice(4)));
+    const store = useAppStore.getState();
+    return launchableApps()
+      .filter((app) => store.isInstalled(app.id))
+      .filter(
+        (app) =>
+          matches(app.name, query) ||
+          matches(app.description, query) ||
+          matches(app.category, query) ||
+          (app.keywords?.some((keyword) => matches(keyword, query)) ?? false),
+      )
+      .map((app) => ({
+        id: `app:${app.id}`,
+        group: 'Applications' as const,
+        title: app.name,
+        subtitle: app.description,
+        icon: app.icon,
+        color: app.color,
+        score: score(app.name, query, 0),
+        run: () => OS.openApp(app.id),
+      }));
   },
 };
-
-function appsMatching(query: string) {
-  const apps = useAppStore.getState();
-  const ids = new Set<string>();
-  const results = [];
-  for (const id of [...apps.pinned, ...apps.recent]) ids.add(id);
-  const all = [...ids].map((id) => getApp(id)).filter(Boolean);
-  void all;
-  // Search the whole registry, not just recents.
-  const registry = (
-    [] as Array<ReturnType<typeof getApp>>
-  ).concat(...[SETTINGS_SECTIONS.length ? [] : []]);
-  void registry;
-  return allAppsMatching(query);
-}
-
-function allAppsMatching(query: string) {
-  const { launchableApps } = require_registry();
-  return launchableApps().filter(
-    (app: { name: string; description: string; keywords?: string[]; category: string }) =>
-      matches(app.name, query) ||
-      matches(app.description, query) ||
-      matches(app.category, query) ||
-      app.keywords?.some((keyword) => matches(keyword, query)),
-  );
-}
-
-// Indirection kept so the module graph stays acyclic at import time.
-function require_registry() {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return { launchableApps: registryRef.launchableApps };
-}
-
-const registryRef: { launchableApps: () => never[] } = { launchableApps: () => [] };
 
 const fileProvider: SearchProvider = {
   id: 'files',
@@ -106,24 +90,12 @@ const fileProvider: SearchProvider = {
       group: node.kind === 'folder' ? ('Folders' as const) : ('Files' as const),
       title: node.name,
       subtitle: `${describeMime(node.mime)} · ${vfs.pathOf(node.id)}`,
-      icon: node.kind === 'folder' ? 'Folder' : iconForCategory(categoryForMime(node.mime)),
+      icon: node.kind === 'folder' ? 'Folder' : (CATEGORY_ICONS[categoryForMime(node.mime)] ?? 'File'),
+      color: node.kind === 'folder' ? '#f0c060' : '#7f8aa3',
       score: score(node.name, query, 100),
       run: () => OS.openFile(node),
     })),
 };
-
-function iconForCategory(category: string): string {
-  const map: Record<string, string> = {
-    text: 'FileText',
-    code: 'FileCode',
-    image: 'FileImage',
-    audio: 'FileAudio',
-    video: 'FileVideo',
-    archive: 'FileArchive',
-    document: 'FileText',
-  };
-  return map[category] ?? 'File';
-}
 
 const settingsProvider: SearchProvider = {
   id: 'settings',
@@ -145,6 +117,7 @@ const settingsProvider: SearchProvider = {
     })),
 };
 
+/** Shape the Notes app persists; kept in sync with `apps/Notes/storage.ts`. */
 interface StoredNote {
   id: string;
   title: string;
@@ -182,11 +155,6 @@ export function registerSearchProvider(provider: SearchProvider): () => void {
   };
 }
 
-/** Wire the app registry in after module init, avoiding an import cycle. */
-export function connectAppRegistry(launchableApps: () => never[]): void {
-  registryRef.launchableApps = launchableApps;
-}
-
 export async function runSearch(query: string, limit = 30): Promise<SearchResult[]> {
   const needle = query.trim();
   if (needle.length === 0) return [];
@@ -206,5 +174,4 @@ export const SEARCH_GROUP_ORDER: SearchGroup[] = [
   'Folders',
   'Notes',
   'Settings',
-  'Actions',
 ];
