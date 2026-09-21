@@ -16,6 +16,7 @@ import { hydratePermissions } from './permissions/store';
 import { hydrateSettings, useSettingsStore } from './settings/store';
 import { startSettingsEffects } from './settings/apply';
 import { hydrateDesktop } from './shell/desktop-store';
+import { destroyDatabase } from './storage/db';
 import { useShellStore } from './shell/store';
 import { hydrateWindowPreferences } from './window-manager/store';
 
@@ -67,7 +68,6 @@ export function bootPalmOS(): Promise<void> {
 
 /** Wipe every trace of Palm OS from this browser and reload. */
 export async function resetPalmOS(): Promise<void> {
-  const { destroyDatabase } = await import('./storage/db');
   useSettingsStore.getState().reset();
   await destroyDatabase();
   try {

@@ -9,6 +9,7 @@ import { useShellStore } from '../../core/shell/store';
 import type { ContextMenuItem } from '../../core/shell/store';
 import { useClipboardStore } from '../../core/clipboard/store';
 import { cn } from '../../utils/cn';
+import { ConfirmDialog } from '../../components/ui/Modal';
 import { DesktopIcon } from './DesktopIcon';
 import {
   CELL,
@@ -52,6 +53,7 @@ export function Desktop({ height }: { height: number }) {
   const clipboardPayload = useClipboardStore((s) => s.payload);
 
   const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
+  const [confirmTrash, setConfirmTrash] = useState<typeof selectedNodes | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [size, setSize] = useState({ width: 1280, height: 720 });
 
@@ -291,8 +293,9 @@ export function Desktop({ height }: { height: number }) {
     [selection, iconByKey],
   );
 
-  const trashSelected = useCallback(async () => {
-    const nodes = selectedNodes.filter((node) => !node.system);
+  const trashSelected = useCallback(async (override?: typeof selectedNodes) => {
+    const nodes = (override ?? selectedNodes).filter((node) => !node.system);
+    setConfirmTrash(null);
     if (nodes.length === 0) return;
     try {
       for (const node of nodes) await vfs.moveToTrash(node.id);
@@ -309,6 +312,14 @@ export function Desktop({ height }: { height: number }) {
       });
     }
   }, [selectedNodes, setSelection]);
+
+  /** Honour Accessibility ▸ "Confirm before moving to Trash". */
+  const requestTrash = useCallback(() => {
+    const nodes = selectedNodes.filter((node) => !node.system);
+    if (nodes.length === 0) return;
+    if (useSettingsStore.getState().settings.confirmBeforeTrash) setConfirmTrash(nodes);
+    else void trashSelected(nodes);
+  }, [selectedNodes, trashSelected]);
 
   const commitRename = useCallback(
     async (model: DesktopIconModel, name: string) => {
@@ -521,7 +532,7 @@ export function Desktop({ height }: { height: number }) {
             hint: 'Del',
             danger: true,
             disabled: !model.deletable,
-            onSelect: () => void trashSelected(),
+            onSelect: requestTrash,
           },
           { id: 'sep-3', separator: true },
           {
@@ -551,7 +562,7 @@ export function Desktop({ height }: { height: number }) {
 
       openContextMenu({ x: event.clientX, y: event.clientY, items, label: `${model.label} menu` });
     },
-    [iconByKey, openContextMenu, openIcon, selection, setRenaming, setSelection, trashSelected],
+    [iconByKey, openContextMenu, openIcon, requestTrash, selection, setRenaming, setSelection],
   );
 
   /* ------------------------------- Keyboard ------------------------------- */
@@ -573,7 +584,7 @@ export function Desktop({ height }: { height: number }) {
         }
       } else if (event.key === 'Delete' && state.selection.length > 0) {
         event.preventDefault();
-        void trashSelected();
+        requestTrash();
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         setSelection(icons.map((icon) => icon.key));
@@ -594,7 +605,7 @@ export function Desktop({ height }: { height: number }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [iconByKey, icons, pasteHere, selectedNodes, setRenaming, setSelection, trashSelected]);
+  }, [iconByKey, icons, pasteHere, requestTrash, selectedNodes, setRenaming, setSelection]);
 
   /* ------------------------------ Drop target ----------------------------- */
 
@@ -662,6 +673,19 @@ export function Desktop({ height }: { height: number }) {
           ))}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={confirmTrash !== null}
+        title={
+          confirmTrash?.length === 1
+            ? `Move "${confirmTrash[0].name}" to the Trash?`
+            : `Move ${confirmTrash?.length ?? 0} items to the Trash?`
+        }
+        description="You can restore items from the Trash until you empty it."
+        confirmLabel="Move to Trash"
+        onConfirm={() => confirmTrash && void trashSelected(confirmTrash)}
+        onCancel={() => setConfirmTrash(null)}
+      />
 
       {marquee ? (
         <div

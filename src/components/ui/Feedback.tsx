@@ -53,7 +53,7 @@ export type BadgeTone = 'neutral' | 'accent' | 'ok' | 'warn' | 'danger';
 
 const TONES: Record<BadgeTone, string> = {
   neutral: 'bg-surface-3 text-ink-2',
-  accent: 'bg-accent-soft text-accent',
+  accent: 'bg-accent-soft text-accent-ink',
   ok: 'bg-ok/15 text-ok',
   warn: 'bg-warn/15 text-warn',
   danger: 'bg-danger/15 text-danger',
@@ -107,7 +107,7 @@ export function Notice({
   };
   const iconTone: Record<BadgeTone, string> = {
     neutral: 'text-ink-3',
-    accent: 'text-accent',
+    accent: 'text-accent-ink',
     ok: 'text-ok',
     warn: 'text-warn',
     danger: 'text-danger',

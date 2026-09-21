@@ -1,7 +1,7 @@
 {
-  "name": "palm",
+  "name": "palm-os",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,5 +25,10 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
+  },
+  "description": "A desktop operating system that runs entirely in the browser.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
   }
 }

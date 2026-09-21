@@ -11,7 +11,7 @@ import { useWindowStore } from '../../core/window-manager/store';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn } from '../../utils/cn';
 import { matches } from '../../utils/misc';
-import { panelAnchor } from '../panel-anchor';
+import { panelAnchor, useTaskbarThickness } from '../panel-anchor';
 
 export function StartMenu() {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -26,6 +26,8 @@ export function StartMenu() {
   const recent = useRecentApps(6);
   const pinnedIds = useAppStore((s) => s.pinned);
   const usage = useAppStore((s) => s.usage);
+
+  const taskbarThickness = useTaskbarThickness();
 
   useClickOutside(panelRef, closePanel);
 
@@ -101,7 +103,7 @@ export function StartMenu() {
         'overflow-hidden rounded-xl shadow-[var(--shadow-panel)]',
         'max-h-[min(640px,calc(100vh-5rem))]',
       )}
-      style={panelAnchor(position, 'start')}
+      style={panelAnchor(position, 'start', taskbarThickness)}
     >
       {/* -------------------------------- Search ------------------------------- */}
       <div className="border-b border-edge/8 p-3">

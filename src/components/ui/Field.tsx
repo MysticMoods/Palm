@@ -179,7 +179,10 @@ export function Segmented<T extends string>({
       role="radiogroup"
       aria-label={label}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-lg border border-edge/10 bg-surface-2 p-0.5',
+        // `max-w-full` + horizontal scroll rather than wrapping: a segmented
+        // control that wraps stops reading as one control.
+        'os-scroll inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-lg',
+        'border border-edge/10 bg-surface-2 p-0.5',
         className,
       )}
     >
@@ -193,7 +196,8 @@ export function Segmented<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-md font-medium transition-colors duration-150',
+              'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md font-medium',
+              'transition-colors duration-150',
               size === 'sm' ? 'h-6 px-2 text-xs' : 'h-8 px-3 text-sm',
               selected
                 ? 'bg-accent text-accent-fg shadow-sm'

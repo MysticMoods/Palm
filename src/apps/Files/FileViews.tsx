@@ -168,6 +168,8 @@ export const GridView = memo(function GridView({
 /* -------------------------------- List view ------------------------------ */
 
 interface ListViewProps extends ViewProps {
+  /** Drops the Modified and Type columns when there is no room for them. */
+  narrow: boolean;
   sortKey: SortKey;
   sortDirection: SortDirection;
   onSort: (key: SortKey) => void;
@@ -178,6 +180,7 @@ export const ListView = memo(function ListView({
   selection,
   renamingId,
   cutIds,
+  narrow,
   sortKey,
   sortDirection,
   onSort,
@@ -195,8 +198,8 @@ export const ListView = memo(function ListView({
 
   const columns: Array<{ key: SortKey; label: string; className: string }> = [
     { key: 'name', label: 'Name', className: 'flex-1 min-w-0' },
-    { key: 'modified', label: 'Modified', className: 'w-40 shrink-0 hidden md:block' },
-    { key: 'type', label: 'Type', className: 'w-36 shrink-0 hidden lg:block' },
+    { key: 'modified', label: 'Modified', className: cn('w-40 shrink-0', narrow && 'hidden') },
+    { key: 'type', label: 'Type', className: cn('w-36 shrink-0', narrow && 'hidden') },
     { key: 'size', label: 'Size', className: 'w-20 shrink-0 text-right' },
   ];
 
@@ -268,7 +271,7 @@ export const ListView = memo(function ListView({
                     className={cn(
                       'flex cursor-default items-center gap-3 px-3 text-[12.5px] transition-colors',
                       'data-[dropping]:bg-accent/25',
-                      selected ? 'bg-accent-soft text-accent' : 'text-ink-2 hover:bg-surface-2',
+                      selected ? 'bg-accent-soft text-accent-ink' : 'text-ink-2 hover:bg-surface-2',
                       cutIds.includes(node.id) && 'opacity-45',
                     )}
                   >
@@ -285,10 +288,10 @@ export const ListView = memo(function ListView({
                         <span className="truncate">{node.name}</span>
                       )}
                     </span>
-                    <span className="hidden w-40 shrink-0 truncate text-[11.5px] text-ink-3 md:block">
+                    <span className={cn('w-40 shrink-0 truncate text-[11.5px] text-ink-3', narrow && 'hidden')}>
                       {formatDate(node.modifiedAt)}
                     </span>
-                    <span className="hidden w-36 shrink-0 truncate text-[11.5px] text-ink-3 lg:block">
+                    <span className={cn('w-36 shrink-0 truncate text-[11.5px] text-ink-3', narrow && 'hidden')}>
                       {describeMime(node.mime)}
                     </span>
                     <span className="w-20 shrink-0 text-right text-[11.5px] tabular-nums text-ink-3">

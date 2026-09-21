@@ -15,15 +15,20 @@ import { AppContext } from '../app-context';
 import { useWindowGestures } from './useWindowGestures';
 import type { ResizeEdge } from './useWindowGestures';
 
+/**
+ * Resize zones straddle the window border by a few pixels on each side, the
+ * way desktop window managers do — an edge that is only grabbable *inside* the
+ * frame is fiddly to hit.
+ */
 const RESIZE_HANDLES: Array<{ edge: ResizeEdge; className: string; cursor: string }> = [
-  { edge: 'n', className: 'left-2 right-2 -top-1 h-2', cursor: 'ns-resize' },
-  { edge: 's', className: 'left-2 right-2 -bottom-1 h-2', cursor: 'ns-resize' },
-  { edge: 'w', className: 'top-2 bottom-2 -left-1 w-2', cursor: 'ew-resize' },
-  { edge: 'e', className: 'top-2 bottom-2 -right-1 w-2', cursor: 'ew-resize' },
-  { edge: 'nw', className: '-top-1 -left-1 h-3 w-3', cursor: 'nwse-resize' },
-  { edge: 'ne', className: '-top-1 -right-1 h-3 w-3', cursor: 'nesw-resize' },
-  { edge: 'sw', className: '-bottom-1 -left-1 h-3 w-3', cursor: 'nesw-resize' },
-  { edge: 'se', className: '-bottom-1 -right-1 h-3 w-3', cursor: 'nwse-resize' },
+  { edge: 'n', className: 'left-3 right-3 -top-[5px] h-[10px]', cursor: 'ns-resize' },
+  { edge: 's', className: 'left-3 right-3 -bottom-[5px] h-[10px]', cursor: 'ns-resize' },
+  { edge: 'w', className: 'top-3 bottom-3 -left-[5px] w-[10px]', cursor: 'ew-resize' },
+  { edge: 'e', className: 'top-3 bottom-3 -right-[5px] w-[10px]', cursor: 'ew-resize' },
+  { edge: 'nw', className: '-top-[5px] -left-[5px] h-4 w-4', cursor: 'nwse-resize' },
+  { edge: 'ne', className: '-top-[5px] -right-[5px] h-4 w-4', cursor: 'nesw-resize' },
+  { edge: 'sw', className: '-bottom-[5px] -left-[5px] h-4 w-4', cursor: 'nesw-resize' },
+  { edge: 'se', className: '-bottom-[5px] -right-[5px] h-4 w-4', cursor: 'nwse-resize' },
 ];
 
 interface WindowFrameProps {
@@ -42,6 +47,7 @@ function WindowFrameInner({ win, focused }: WindowFrameProps) {
   const focus = useWindowStore((s) => s.focus);
   const snapTo = useWindowStore((s) => s.snapTo);
   const setCrash = useWindowStore((s) => s.setCrash);
+  const compact = useWindowStore((s) => s.compact);
   const restartWindow = useWindowStore((s) => s.restartWindow);
   const openContextMenu = useShellStore((s) => s.openContextMenu);
 
@@ -124,12 +130,11 @@ function WindowFrameInner({ win, focused }: WindowFrameProps) {
       data-focused={focused || undefined}
       onPointerDown={() => focus(win.id)}
       className={cn(
-        'anim-pop absolute left-0 top-0 flex flex-col overflow-hidden',
-        'border bg-surface will-change-transform',
+        'absolute left-0 top-0',
         rounded ? 'rounded-none' : 'rounded-[var(--radius-window)]',
         focused
-          ? 'border-edge/18 shadow-[var(--shadow-window)]'
-          : 'border-edge/8 shadow-[0_8px_28px_-12px_rgb(0_0_0/0.5)]',
+          ? 'shadow-[var(--shadow-window)]'
+          : 'shadow-[0_8px_28px_-12px_rgb(0_0_0/0.5)]',
       )}
       style={{
         transform: `translate3d(${Math.round(win.bounds.x)}px, ${Math.round(win.bounds.y)}px, 0)`,
@@ -138,14 +143,27 @@ function WindowFrameInner({ win, focused }: WindowFrameProps) {
         zIndex: win.zIndex,
       }}
     >
+      {/*
+        The entrance animation lives on this inner layer, never on the frame:
+        a keyframe that ends at `transform: none` with `fill: both` would
+        permanently override the frame's inline transform and pin every window
+        to the top-left corner.
+      */}
+      <div
+        className={cn(
+          'anim-pop flex h-full flex-col overflow-hidden border bg-surface',
+          rounded ? 'rounded-none' : 'rounded-[var(--radius-window)]',
+          focused ? 'border-edge/18' : 'border-edge/8',
+        )}
+      >
       {/* ------------------------------ Title bar ------------------------------ */}
       <div
-        onPointerDown={onTitleBarPointerDown}
-        onDoubleClick={() => toggleMaximize(win.id)}
+        onPointerDown={compact ? undefined : onTitleBarPointerDown}
+        onDoubleClick={compact ? undefined : () => toggleMaximize(win.id)}
         onContextMenu={onTitleContextMenu}
         className={cn(
-          'no-select flex h-9 shrink-0 items-center gap-2 border-b border-edge/8 px-2.5',
-          'cursor-grab active:cursor-grabbing',
+          'no-select flex shrink-0 items-center gap-2 border-b border-edge/8 px-2.5',
+          compact ? 'h-11' : 'h-9 cursor-grab active:cursor-grabbing',
           focused ? 'bg-surface-2/80' : 'bg-surface-2/40',
         )}
       >
@@ -171,20 +189,26 @@ function WindowFrameInner({ win, focused }: WindowFrameProps) {
             onClick={() => minimize(win.id)}
             aria-label={`Minimise ${win.title}`}
             title="Minimise"
-            className="flex h-6 w-7 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink"
+            className={cn(
+              'flex items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink',
+              compact ? 'h-9 w-9' : 'h-6 w-7',
+            )}
           >
-            <Icon name="Minus" size={13} />
+            <Icon name="Minus" size={compact ? 16 : 13} />
           </button>
-          {win.resizable ? (
+          {win.resizable && !compact ? (
             <button
               type="button"
               data-window-control
               onClick={() => toggleMaximize(win.id)}
               aria-label={win.mode === 'maximized' ? `Restore ${win.title}` : `Maximise ${win.title}`}
               title={win.mode === 'maximized' ? 'Restore' : 'Maximise'}
-              className="flex h-6 w-7 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink"
+              className={cn(
+                'flex items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink',
+                compact ? 'h-9 w-9' : 'h-6 w-7',
+              )}
             >
-              <Icon name={win.mode === 'maximized' || win.mode === 'snapped' ? 'Minimize2' : 'Maximize2'} size={12} />
+              <Icon name={win.mode === 'maximized' || win.mode === 'snapped' ? 'Minimize2' : 'Maximize2'} size={compact ? 15 : 12} />
             </button>
           ) : null}
           <button
@@ -193,9 +217,12 @@ function WindowFrameInner({ win, focused }: WindowFrameProps) {
             onClick={requestClose}
             aria-label={`Close ${win.title}`}
             title="Close"
-            className="flex h-6 w-7 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-danger hover:text-white"
+            className={cn(
+              'flex items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-danger hover:text-white',
+              compact ? 'h-9 w-9' : 'h-6 w-7',
+            )}
           >
-            <Icon name="X" size={13} />
+            <Icon name="X" size={compact ? 16 : 13} />
           </button>
         </div>
       </div>
@@ -231,9 +258,10 @@ function WindowFrameInner({ win, focused }: WindowFrameProps) {
           />
         )}
       </div>
+      </div>
 
       {/* ---------------------------- Resize handles --------------------------- */}
-      {win.resizable && win.mode === 'normal'
+      {!compact && win.resizable && (win.mode === 'normal' || win.mode === 'snapped')
         ? RESIZE_HANDLES.map(({ edge, className, cursor }) => (
             <div
               key={edge}

@@ -50,6 +50,7 @@ interface WindowManagerState {
   cycleFocus: (direction: 1 | -1) => void;
   minimizeAll: () => void;
   rememberBounds: (appId: string, rect: Rect) => void;
+  setCompact: (compact: boolean) => void;
 }
 
 const DEFAULT_AREA: Rect = { x: 0, y: 0, width: 1280, height: 720 };
@@ -323,6 +324,31 @@ export const useWindowStore = create<WindowManagerState>()((set, get) => ({
 
   rememberBounds: (appId, rect) =>
     set((s) => ({ remembered: { ...s.remembered, [appId]: rect } })),
+
+  /**
+   * Below `COMPACT_BREAKPOINT` there is no room for overlapping windows, so
+   * every window becomes full-screen and the shell behaves like a phone: one
+   * app visible at a time, switched from the taskbar.
+   */
+  setCompact: (compact) =>
+    set((s) => {
+      if (s.compact === compact) return {};
+      if (!compact) return { compact };
+      return {
+        compact,
+        windows: s.windows.map((w) =>
+          w.mode === 'minimized'
+            ? w
+            : {
+                ...w,
+                restoreBounds: w.restoreBounds ?? (w.mode === 'normal' ? w.bounds : null),
+                bounds: s.workArea,
+                mode: 'maximized' as const,
+                snap: null,
+              },
+        ),
+      };
+    }),
 }));
 
 /* ------------------------------ Selectors ------------------------------ */

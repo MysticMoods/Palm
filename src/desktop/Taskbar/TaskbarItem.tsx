@@ -60,7 +60,7 @@ function TaskbarItemInner({
           <span
             aria-hidden="true"
             className={cn(
-              'absolute rounded-full bg-accent transition-all duration-200',
+              'absolute rounded-full bg-accent-ink transition-all duration-200',
               vertical
                 ? cn('left-0.5 w-[3px]', focused ? 'h-5' : 'h-2')
                 : cn('bottom-0.5 h-[3px]', focused ? 'w-5' : 'w-2'),

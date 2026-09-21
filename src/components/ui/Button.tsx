@@ -104,7 +104,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         'disabled:opacity-40 disabled:pointer-events-none',
         VARIANTS[variant],
         box,
-        active && 'bg-accent-soft text-accent',
+        active && 'bg-accent-soft text-accent-ink',
         className,
       )}
       {...rest}

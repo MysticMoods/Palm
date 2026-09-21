@@ -10,7 +10,7 @@ import { useClickOutside } from '../../hooks/useClickOutside';
 import { useBattery, useFullscreen, useNetwork } from '../../hooks/useSystem';
 import { cn } from '../../utils/cn';
 import { formatDuration } from '../../utils/format';
-import { panelAnchor } from '../panel-anchor';
+import { panelAnchor, useTaskbarThickness } from '../panel-anchor';
 
 export function QuickSettings() {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -22,6 +22,8 @@ export function QuickSettings() {
   const network = useNetwork();
   const battery = useBattery();
   const { isFullscreen, toggle: toggleFullscreen, supported: fullscreenSupported } = useFullscreen();
+
+  const taskbarThickness = useTaskbarThickness();
 
   useClickOutside(panelRef, closePanel);
 
@@ -39,7 +41,7 @@ export function QuickSettings() {
         'anim-pop os-glass-strong absolute z-[600] w-[min(340px,calc(100vw-1.5rem))]',
         'overflow-hidden rounded-xl shadow-[var(--shadow-panel)]',
       )}
-      style={panelAnchor(settings.taskbarPosition, 'tray')}
+      style={panelAnchor(settings.taskbarPosition, 'tray', taskbarThickness)}
     >
       {/* ------------------------------- Tiles -------------------------------- */}
       <div className="grid grid-cols-2 gap-2 p-3">
@@ -204,13 +206,13 @@ function Tile({
         'flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors duration-150',
         'disabled:opacity-40 disabled:pointer-events-none',
         active
-          ? 'border-accent/40 bg-accent-soft text-accent'
+          ? 'border-accent/40 bg-accent-soft text-accent-ink'
           : 'border-edge/10 bg-surface-2/60 text-ink-2 hover:bg-surface-3',
       )}
     >
       <Icon name={icon} size={16} />
       <span className="min-w-0">
-        <span className={cn('block truncate text-[12px] font-medium', active ? 'text-accent' : 'text-ink')}>
+        <span className={cn('block truncate text-[12px] font-medium', active ? 'text-accent-ink' : 'text-ink')}>
           {label}
         </span>
         <span className="block truncate text-[10.5px] text-ink-3">{sublabel}</span>

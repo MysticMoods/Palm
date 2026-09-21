@@ -6,6 +6,8 @@ import { DROP_MIME, readDroppedNodes, moveNodesInto } from '../../desktop/dnd';
 import type { FilesView } from './types';
 
 interface SidebarProps {
+  /** Hidden when the window is too narrow for two panes. */
+  hidden: boolean;
   view: FilesView;
   currentPath: string;
   onNavigate: (path: string) => void;
@@ -15,6 +17,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+  hidden,
   view,
   currentPath,
   onNavigate,
@@ -25,7 +28,10 @@ export function Sidebar({
   return (
     <nav
       aria-label="Places"
-      className="os-scroll hidden w-48 shrink-0 overflow-y-auto border-r border-edge/8 bg-surface-2/40 p-2 sm:block"
+      className={cn(
+        'os-scroll w-48 shrink-0 overflow-y-auto border-r border-edge/8 bg-surface-2/40 p-2',
+        hidden ? 'hidden' : 'block',
+      )}
     >
       <Group label="Palm OS filesystem">
         <Item
@@ -142,7 +148,7 @@ function Item({
         className={cn(
           'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors',
           'data-[dropping]:bg-accent/25 data-[dropping]:ring-1 data-[dropping]:ring-accent',
-          active ? 'bg-accent-soft font-medium text-accent' : 'text-ink-2 hover:bg-surface-3 hover:text-ink',
+          active ? 'bg-accent-soft font-medium text-accent-ink' : 'text-ink-2 hover:bg-surface-3 hover:text-ink',
         )}
       >
         <Icon name={icon} size={14} />

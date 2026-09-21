@@ -5,19 +5,20 @@ import type { OSNotification } from '../core/notifications/store';
 import { useSettingsStore } from '../core/settings/store';
 import { playSound } from '../core/sound';
 import { cn } from '../utils/cn';
-import { TASKBAR_THICKNESS } from './Taskbar/Taskbar';
+import { useTaskbarThickness } from './panel-anchor';
 
 /** Transient on-screen notifications, stacked away from the taskbar. */
 export function Toasts() {
   const toastIds = useNotificationStore((s) => s.toasts);
   const items = useNotificationStore((s) => s.items);
   const position = useSettingsStore((s) => s.settings.taskbarPosition);
+  const taskbarThickness = useTaskbarThickness();
 
   const toasts = toastIds
     .map((id) => items.find((item) => item.id === id))
     .filter((item): item is OSNotification => Boolean(item));
 
-  const offset = TASKBAR_THICKNESS + 12;
+  const offset = taskbarThickness + 12;
   const style =
     position === 'top'
       ? { top: offset, right: 12 }

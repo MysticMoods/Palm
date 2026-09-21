@@ -86,6 +86,9 @@ export function useWindowGestures(
 
       element.setPointerCapture(event.pointerId);
       element.style.transition = 'none';
+      // Only hint the compositor while a gesture is running: a permanent
+      // `will-change` on every window wastes GPU memory for no benefit.
+      element.style.willChange = 'transform';
       document.body.style.cursor = 'grabbing';
 
       const snapEnabled = getSettings().snapAssist;
@@ -130,6 +133,7 @@ export function useWindowGestures(
 
         state.element.releasePointerCapture?.(upEvent.pointerId);
         state.element.style.transition = '';
+        state.element.style.willChange = '';
         document.body.style.cursor = '';
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', finish);
@@ -186,6 +190,7 @@ export function useWindowGestures(
 
       element.setPointerCapture(event.pointerId);
       element.style.transition = 'none';
+      element.style.willChange = 'transform,width,height';
 
       const onMove = (moveEvent: PointerEvent) => {
         const state = gesture.current;
@@ -234,6 +239,7 @@ export function useWindowGestures(
 
         state.element.releasePointerCapture?.(upEvent.pointerId);
         state.element.style.transition = '';
+        state.element.style.willChange = '';
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', finish);
         window.removeEventListener('pointercancel', finish);

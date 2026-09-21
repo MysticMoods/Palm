@@ -8,7 +8,7 @@ import { useSettingsStore } from '../../core/settings/store';
 import { useShellStore } from '../../core/shell/store';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn } from '../../utils/cn';
-import { panelAnchor } from '../panel-anchor';
+import { panelAnchor, useTaskbarThickness } from '../panel-anchor';
 
 const DEBOUNCE_MS = 140;
 
@@ -21,6 +21,8 @@ export function SearchPanel() {
 
   const closePanel = useShellStore((s) => s.closePanel);
   const position = useSettingsStore((s) => s.settings.taskbarPosition);
+
+  const taskbarThickness = useTaskbarThickness();
 
   useClickOutside(panelRef, closePanel);
 
@@ -105,7 +107,7 @@ export function SearchPanel() {
         'overflow-hidden rounded-xl shadow-[var(--shadow-panel)]',
         'max-h-[min(560px,calc(100vh-5rem))]',
       )}
-      style={panelAnchor(position, 'search')}
+      style={panelAnchor(position, 'search', taskbarThickness)}
     >
       <div className="border-b border-edge/8 p-3">
         <TextField

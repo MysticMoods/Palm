@@ -9,6 +9,7 @@ import { useDirectory, useFsRevision } from '../../core/filesystem/useFs';
 import { FSError, vfs } from '../../core/filesystem/vfs';
 import type { FSNode } from '../../core/filesystem/types';
 import { downloadBlob } from '../../core/filesystem/local';
+import { DEFAULT_FOLDERS } from '../../core/filesystem/seed';
 import { notifications } from '../../core/notifications/store';
 import { OS } from '../../core/os';
 import { appsForFile } from '../../core/app-manager/registry';
@@ -17,6 +18,7 @@ import { useShellStore } from '../../core/shell/store';
 import type { ContextMenuItem } from '../../core/shell/store';
 import type { AppProps } from '../../core/app-manager/types';
 import { DROP_MIME, importDroppedFiles, moveNodesInto, readDroppedNodes, writeDraggedNodes } from '../../desktop/dnd';
+import { useIsNarrow } from '../../hooks/useElementWidth';
 import { useOS } from '../../desktop/app-context';
 import { cn } from '../../utils/cn';
 import { formatBytes, pluralize } from '../../utils/format';
@@ -46,6 +48,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
   const [propertiesId, setPropertiesId] = useState<string | null>(params?.properties ?? null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<FSNode[] | null>(null);
+  const [confirmTrash, setConfirmTrash] = useState<FSNode[] | null>(null);
   const [dropActive, setDropActive] = useState(false);
 
   const path = history[historyIndex] ?? '/';
@@ -194,9 +197,18 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
     }
   };
 
+  /** Honour Accessibility ▸ "Confirm before moving to Trash". */
+  const requestTrash = (nodes: FSNode[]) => {
+    const targets = nodes.filter((node) => !node.system);
+    if (targets.length === 0) return;
+    if (OS.settings.get('confirmBeforeTrash')) setConfirmTrash(targets);
+    else void trashSelection(targets);
+  };
+
   const trashSelection = async (nodes: FSNode[]) => {
     const targets = nodes.filter((node) => !node.system);
     if (targets.length === 0) return;
+    setConfirmTrash(null);
     try {
       for (const node of targets) await vfs.moveToTrash(node.id);
       setSelection([]);
@@ -417,7 +429,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
             hint: 'Del',
             danger: true,
             disabled: targets.every((target) => target.system),
-            onSelect: () => void trashSelection(targets),
+            onSelect: () => requestTrash(targets),
           },
           { id: 'sep-4', separator: true },
           {
@@ -445,68 +457,68 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
       const items: ContextMenuItem[] =
         view === 'trash'
           ? [
-              {
-                id: 'empty',
-                label: 'Empty Trash',
-                icon: 'Trash2',
-                danger: true,
-                disabled: trash.length === 0,
-                onSelect: () => setConfirmEmpty(true),
-              },
-            ]
+            {
+              id: 'empty',
+              label: 'Empty Trash',
+              icon: 'Trash2',
+              danger: true,
+              disabled: trash.length === 0,
+              onSelect: () => setConfirmEmpty(true),
+            },
+          ]
           : [
-              {
-                id: 'new',
-                label: 'New',
-                icon: 'Plus',
-                items: [
-                  { id: 'new-folder', label: 'Folder', icon: 'FolderPlus', onSelect: () => void createFolder() },
-                  { id: 'new-file', label: 'Text file', icon: 'FilePlus', onSelect: () => void createFile() },
-                ],
-              },
-              {
-                id: 'paste',
-                label: 'Paste',
-                icon: 'ClipboardPaste',
-                hint: 'Ctrl + V',
-                disabled: clipboard?.kind !== 'files',
-                onSelect: () => void paste(),
-              },
-              { id: 'sep-1', separator: true },
-              {
-                id: 'view',
-                label: 'View',
-                icon: 'Grid2x2',
-                items: [
-                  { id: 'grid', label: 'Grid', checked: mode === 'grid', onSelect: () => setMode('grid') },
-                  { id: 'list', label: 'List', checked: mode === 'list', onSelect: () => setMode('list') },
-                ],
-              },
-              {
-                id: 'sort',
-                label: 'Sort by',
-                icon: 'ListFilter',
-                items: (['name', 'type', 'size', 'modified'] as SortKey[]).map((key) => ({
-                  id: `sort-${key}`,
-                  label: key === 'modified' ? 'Date modified' : key[0].toUpperCase() + key.slice(1),
-                  checked: sortKey === key,
-                  onSelect: () => setSortKey(key),
-                })),
-              },
-              { id: 'sep-2', separator: true },
-              {
-                id: 'terminal',
-                label: 'Open Terminal here',
-                icon: 'Terminal',
-                onSelect: () => OS.openApp('terminal', { params: { cwd: path } }),
-              },
-              {
-                id: 'refresh',
-                label: 'Refresh',
-                icon: 'RefreshCw',
-                onSelect: () => setSelection([]),
-              },
-            ];
+            {
+              id: 'new',
+              label: 'New',
+              icon: 'Plus',
+              items: [
+                { id: 'new-folder', label: 'Folder', icon: 'FolderPlus', onSelect: () => void createFolder() },
+                { id: 'new-file', label: 'Text file', icon: 'FilePlus', onSelect: () => void createFile() },
+              ],
+            },
+            {
+              id: 'paste',
+              label: 'Paste',
+              icon: 'ClipboardPaste',
+              hint: 'Ctrl + V',
+              disabled: clipboard?.kind !== 'files',
+              onSelect: () => void paste(),
+            },
+            { id: 'sep-1', separator: true },
+            {
+              id: 'view',
+              label: 'View',
+              icon: 'Grid2x2',
+              items: [
+                { id: 'grid', label: 'Grid', checked: mode === 'grid', onSelect: () => setMode('grid') },
+                { id: 'list', label: 'List', checked: mode === 'list', onSelect: () => setMode('list') },
+              ],
+            },
+            {
+              id: 'sort',
+              label: 'Sort by',
+              icon: 'ListFilter',
+              items: (['name', 'type', 'size', 'modified'] as SortKey[]).map((key) => ({
+                id: `sort-${key}`,
+                label: key === 'modified' ? 'Date modified' : key[0].toUpperCase() + key.slice(1),
+                checked: sortKey === key,
+                onSelect: () => setSortKey(key),
+              })),
+            },
+            { id: 'sep-2', separator: true },
+            {
+              id: 'terminal',
+              label: 'Open Terminal here',
+              icon: 'Terminal',
+              onSelect: () => OS.openApp('terminal', { params: { cwd: path } }),
+            },
+            {
+              id: 'refresh',
+              label: 'Refresh',
+              icon: 'RefreshCw',
+              onSelect: () => setSelection([]),
+            },
+          ];
 
       openContextMenu({ x: event.clientX, y: event.clientY, items, label: 'Folder menu' });
     },
@@ -517,6 +529,8 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
   /* -------------------------------- Keyboard ------------------------------ */
 
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const narrow = useIsNarrow(rootRef, 620);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if ((event.target as HTMLElement).tagName === 'INPUT') return;
@@ -528,7 +542,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
     } else if (event.key === 'Delete' && selectedNodes.length > 0) {
       event.preventDefault();
       if (view === 'trash') setConfirmDelete(selectedNodes);
-      else void trashSelection(selectedNodes);
+      else requestTrash(selectedNodes);
     } else if (event.key === 'Enter' && selectedNodes.length === 1) {
       event.preventDefault();
       openNode(selectedNodes[0]);
@@ -601,8 +615,9 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
   };
 
   return (
-    <div className="flex h-full min-h-0">
+    <div ref={rootRef} className="flex h-full min-h-0">
       <Sidebar
+        hidden={narrow}
         view={view}
         currentPath={path}
         onNavigate={navigate}
@@ -633,6 +648,38 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
             disabled={view !== 'files' || path === '/'}
             onClick={goUp}
           />
+          {narrow ? (
+            <IconButton
+              icon="Menu"
+              label="Places"
+              size="sm"
+              onClick={(event) => {
+                const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+                openContextMenu({
+                  x: rect.left,
+                  y: rect.bottom + 4,
+                  label: 'Places',
+                  items: [
+                    { id: 'root', label: 'This Computer', icon: 'HardDrive', onSelect: () => navigate('/') },
+                    ...DEFAULT_FOLDERS.map((folder) => ({
+                      id: folder.name,
+                      label: folder.name,
+                      icon: folder.icon,
+                      onSelect: () => navigate(`/${folder.name}`),
+                    })),
+                    { id: 'sep', separator: true },
+                    {
+                      id: 'trash',
+                      label: `Trash${trash.length > 0 ? ` (${trash.length})` : ''}`,
+                      icon: 'Trash2',
+                      onSelect: () => setView('trash'),
+                    },
+                    { id: 'local', label: 'Local Disk', icon: 'Database', onSelect: () => setView('local') },
+                  ],
+                });
+              }}
+            />
+          ) : null}
 
           <nav
             aria-label="Breadcrumb"
@@ -775,6 +822,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
               selection={selection}
               renamingId={renamingId}
               cutIds={cutIds}
+              narrow={narrow}
               sortKey={sortKey}
               sortDirection={sortDirection}
               onSort={(key) => {
@@ -821,10 +869,23 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
             const count = await vfs.emptyTrash();
             notifications.push('files', { title: `Deleted ${pluralize(count, 'item')} permanently` });
           } catch (err) {
-            reportError('Could not empty the Trash', err);
+            reportError('Task Failed', err);
           }
         }}
         onCancel={() => setConfirmEmpty(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmTrash !== null}
+        title={
+          confirmTrash?.length === 1
+            ? `Move "${confirmTrash[0].name}" to the Trash?`
+            : `Move ${confirmTrash?.length ?? 0} items to the Trash?`
+        }
+        description="You may restore items from the Trash until you empty it."
+        confirmLabel="Move to Trash"
+        onConfirm={() => confirmTrash && void trashSelection(confirmTrash)}
+        onCancel={() => setConfirmTrash(null)}
       />
 
       <ConfirmDialog
@@ -835,7 +896,7 @@ export default function FilesApp({ params }: AppProps<FilesParams>) {
             : `Permanently delete ${confirmDelete?.length ?? 0} items?`
         }
         description="This cannot be undone."
-        confirmLabel="Delete permanently"
+        confirmLabel="Delete forever"
         destructive
         onConfirm={() => confirmDelete && void deleteForever(confirmDelete)}
         onCancel={() => setConfirmDelete(null)}

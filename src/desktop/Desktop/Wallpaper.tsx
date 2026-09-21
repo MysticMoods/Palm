@@ -42,7 +42,12 @@ export const Wallpaper = memo(function Wallpaper() {
   return (
     <div
       aria-hidden="true"
-      className="absolute inset-0 -z-10 bg-canvas transition-[background-color] duration-300"
+      /*
+       * No negative z-index: it would escape to the root stacking context and
+       * end up painted behind the shell's own opaque background. Ordinary DOM
+       * order keeps the wallpaper beneath the icons drawn after it.
+       */
+      className="absolute inset-0 bg-canvas transition-[background-color] duration-300"
       style={wallpaperStyle(wallpaper, objectUrl)}
     />
   );

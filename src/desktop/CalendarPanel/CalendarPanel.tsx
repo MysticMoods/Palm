@@ -14,7 +14,7 @@ import { useClickOutside } from '../../hooks/useClickOutside';
 import { useClock } from '../../hooks/useClock';
 import { cn } from '../../utils/cn';
 import { formatDayDate, formatTime } from '../../utils/format';
-import { panelAnchor } from '../panel-anchor';
+import { panelAnchor, useTaskbarThickness } from '../panel-anchor';
 
 export function CalendarPanel() {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -26,6 +26,8 @@ export function CalendarPanel() {
   const [selected, setSelected] = useState(() => dateKey(new Date()));
 
   const events = useCalendarStore((s) => s.events);
+  const taskbarThickness = useTaskbarThickness();
+
   useClickOutside(panelRef, closePanel);
 
   const grid = useMemo(() => monthGrid(cursor.getFullYear(), cursor.getMonth()), [cursor]);
@@ -57,7 +59,7 @@ export function CalendarPanel() {
         'anim-pop os-glass-strong absolute z-[600] w-[min(340px,calc(100vw-1.5rem))]',
         'overflow-hidden rounded-xl shadow-[var(--shadow-panel)]',
       )}
-      style={panelAnchor(settings.taskbarPosition, 'tray')}
+      style={panelAnchor(settings.taskbarPosition, 'tray', taskbarThickness)}
     >
       <header className="border-b border-edge/8 px-4 py-3 text-center">
         <p className="text-2xl font-light tabular-nums text-ink">
@@ -113,7 +115,7 @@ export function CalendarPanel() {
                   'relative flex h-8 items-center justify-center rounded-md text-[12px] tabular-nums transition-colors',
                   outside ? 'text-ink-3/50' : 'text-ink-2',
                   isSelected && 'bg-accent text-accent-fg',
-                  !isSelected && isToday && 'font-bold text-accent ring-1 ring-accent/50',
+                  !isSelected && isToday && 'font-bold text-accent-ink ring-1 ring-accent/50',
                   !isSelected && 'hover:bg-surface-3',
                 )}
               >
@@ -122,7 +124,7 @@ export function CalendarPanel() {
                   <span
                     className={cn(
                       'absolute bottom-1 h-1 w-1 rounded-full',
-                      isSelected ? 'bg-accent-fg' : 'bg-accent',
+                      isSelected ? 'bg-accent-fg' : 'bg-accent-ink',
                     )}
                   />
                 ) : null}

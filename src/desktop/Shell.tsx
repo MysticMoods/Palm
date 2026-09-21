@@ -11,7 +11,7 @@ import { PermissionDialog } from './PermissionDialog';
 import { QuickSettings } from './QuickSettings/QuickSettings';
 import { SearchPanel } from './Search/SearchPanel';
 import { StartMenu } from './StartMenu/StartMenu';
-import { TASKBAR_THICKNESS, Taskbar } from './Taskbar/Taskbar';
+import { COMPACT_TASKBAR_THICKNESS, TASKBAR_THICKNESS, Taskbar } from './Taskbar/Taskbar';
 import { Toasts } from './Toasts';
 import { useGlobalShortcuts } from './useGlobalShortcuts';
 import { WindowLayer } from './Window/WindowLayer';
@@ -30,8 +30,11 @@ export function Shell() {
 
   useGlobalShortcuts();
 
+  const compact = viewport.width < COMPACT_BREAKPOINT;
+  const horizontal = taskbarPosition === 'bottom' || taskbarPosition === 'top';
+  const thickness = compact && horizontal ? COMPACT_TASKBAR_THICKNESS : TASKBAR_THICKNESS;
+
   const workArea = useMemo(() => {
-    const thickness = TASKBAR_THICKNESS;
     switch (taskbarPosition) {
       case 'top':
         return { x: 0, y: thickness, width: viewport.width, height: viewport.height - thickness };
@@ -42,25 +45,25 @@ export function Shell() {
       default:
         return { x: 0, y: 0, width: viewport.width, height: viewport.height - thickness };
     }
-  }, [taskbarPosition, viewport.height, viewport.width]);
+  }, [taskbarPosition, thickness, viewport.height, viewport.width]);
 
   useEffect(() => {
     setWorkArea(workArea);
-    useWindowStore.setState({ compact: viewport.width < COMPACT_BREAKPOINT });
+    useWindowStore.getState().setCompact(viewport.width < COMPACT_BREAKPOINT);
   }, [setWorkArea, viewport.width, workArea]);
 
   const desktopStyle = useMemo(() => {
     switch (taskbarPosition) {
       case 'top':
-        return { top: TASKBAR_THICKNESS, left: 0, right: 0, bottom: 0 };
+        return { top: thickness, left: 0, right: 0, bottom: 0 };
       case 'left':
-        return { top: 0, left: TASKBAR_THICKNESS, right: 0, bottom: 0 };
+        return { top: 0, left: thickness, right: 0, bottom: 0 };
       case 'right':
-        return { top: 0, left: 0, right: TASKBAR_THICKNESS, bottom: 0 };
+        return { top: 0, left: 0, right: thickness, bottom: 0 };
       default:
-        return { top: 0, left: 0, right: 0, bottom: TASKBAR_THICKNESS };
+        return { top: 0, left: 0, right: 0, bottom: thickness };
     }
-  }, [taskbarPosition]);
+  }, [taskbarPosition, thickness]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-canvas">

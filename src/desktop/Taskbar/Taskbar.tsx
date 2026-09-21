@@ -16,6 +16,8 @@ import { SystemTray } from '../SystemTray/SystemTray';
 import { TaskbarItem } from './TaskbarItem';
 
 export const TASKBAR_THICKNESS = 48;
+/** Touch targets need more room than a pointer does. */
+export const COMPACT_TASKBAR_THICKNESS = 56;
 
 export const Taskbar = memo(function Taskbar() {
   const position = useSettingsStore((s) => s.settings.taskbarPosition);
@@ -30,6 +32,7 @@ export const Taskbar = memo(function Taskbar() {
   const windows = useWindowStore((s) => s.windows);
   const focusedId = useWindowStore((s) => s.focusedId);
   const minimizeAll = useWindowStore((s) => s.minimizeAll);
+  const compact = useWindowStore((s) => s.compact);
 
   /** Pinned apps first, then anything else that is running. */
   const items = useMemo(() => {
@@ -180,13 +183,17 @@ export const Taskbar = memo(function Taskbar() {
       className={cn(
         'os-glass-strong absolute z-[500] flex border-edge/10',
         edgeBorder,
-        vertical ? 'inset-y-0 w-[48px] flex-col items-center py-2' : 'inset-x-0 h-[48px] items-center px-2',
+        vertical
+          ? 'inset-y-0 w-[48px] flex-col items-center py-2'
+          : cn('inset-x-0 items-center px-2', compact ? 'h-[56px]' : 'h-[48px]'),
         position === 'bottom' && 'bottom-0',
         position === 'top' && 'top-0',
         position === 'left' && 'left-0',
         position === 'right' && 'right-0',
       )}
-      style={{ ['--taskbar-thickness' as string]: `${TASKBAR_THICKNESS}px` }}
+      style={{
+        ['--taskbar-thickness' as string]: `${compact && !vertical ? COMPACT_TASKBAR_THICKNESS : TASKBAR_THICKNESS}px`,
+      }}
     >
       {/* ------------------------------ Start ------------------------------- */}
       <Tooltip content="Start" side={vertical ? 'right' : 'top'}>
@@ -247,7 +254,7 @@ export const Taskbar = memo(function Taskbar() {
       <SystemTray vertical={vertical} />
 
       {/* --------------------------- Show desktop --------------------------- */}
-      {!vertical ? (
+      {!vertical && !compact ? (
         <Tooltip content="Show desktop">
           <button
             type="button"
@@ -261,23 +268,40 @@ export const Taskbar = memo(function Taskbar() {
   );
 });
 
-/** The Palm mark used on the start button. */
+/**
+ * The Palm mark used on the start button.
+ *
+ * Drawn with filled fronds rather than strokes: at 19px a stroked outline
+ * collapses into an unreadable smudge.
+ */
 function PalmGlyph() {
   return (
-    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
-        d="M12 21v-7.5"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
+        d="M11.2 21.5c-.1-3.6.2-6.7 1-9.3.2-.6.5-1.2.8-1.8l1.4.7c-.3.5-.5 1-.7 1.5-.7 2.4-1 5.3-.9 8.8l-1.6.1Z"
+        fill="currentColor"
       />
       <path
-        d="M12 13.5c0-3 2.2-5.4 5.2-5.4M12 13.5c0-3-2.2-5.4-5.2-5.4M12 13.5c.4-2.7 2.6-4.6 5.4-5.6M12 13.5c-.4-2.7-2.6-4.6-5.4-5.6"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
+        d="M12.6 10.4c1.6-2.3 4.2-3.3 7.3-2.7-1.3 2.1-3.4 3.2-6.2 3.3l-1.1-.6Z"
+        fill="currentColor"
+        opacity="0.95"
       />
-      <circle cx="12" cy="7" r="2.1" fill="currentColor" />
+      <path
+        d="M11.7 10.2C10.4 7.7 7.9 6.4 4.7 6.7c1 2.3 3 3.6 5.8 4l1.2-.5Z"
+        fill="currentColor"
+        opacity="0.8"
+      />
+      <path
+        d="M12.9 9.6c.4-2.8 2.1-4.7 5-5.6.2 2.6-1.2 4.7-3.8 6.1l-1.2-.5Z"
+        fill="currentColor"
+        opacity="0.7"
+      />
+      <path
+        d="M11.3 9.7C10.2 7.1 8.2 5.6 5.4 5.3c.4 2.6 2 4.4 4.7 5.2l1.2-.8Z"
+        fill="currentColor"
+        opacity="0.55"
+      />
+      <circle cx="12" cy="10" r="1.9" fill="currentColor" />
     </svg>
   );
 }

@@ -7,22 +7,37 @@
  * ------------------------------------------------------------------ */
 
 @theme {
-  --color-accent: rgb(var(--os-accent) / <alpha-value>);
+  /*
+   * Colours resolve through the `--os-*` triplets defined per theme below, so
+   * switching theme re-tints every utility without rebuilding anything.
+   *
+   * Tailwind v4 applies opacity modifiers with `color-mix()` rather than the
+   * v3 `<alpha-value>` placeholder, so these must be complete colour values —
+   * a stray `<alpha-value>` here yields an invalid colour and everything using
+   * it silently renders transparent.
+   */
+  --color-accent: rgb(var(--os-accent));
   --color-accent-soft: rgb(var(--os-accent) / 0.16);
-  --color-accent-fg: rgb(var(--os-accent-fg) / <alpha-value>);
+  --color-accent-fg: rgb(var(--os-accent-fg));
+  /*
+   * The accent is user-chosen, so it cannot be assumed readable as text. This
+   * token is the same hue adjusted at runtime until it clears 4.5:1 against
+   * the current surface; `--color-accent` stays exact for fills and borders.
+   */
+  --color-accent-ink: rgb(var(--os-accent-ink, var(--os-accent)));
 
-  --color-canvas: rgb(var(--os-canvas) / <alpha-value>);
-  --color-surface: rgb(var(--os-surface) / <alpha-value>);
-  --color-surface-2: rgb(var(--os-surface-2) / <alpha-value>);
-  --color-surface-3: rgb(var(--os-surface-3) / <alpha-value>);
-  --color-edge: rgb(var(--os-edge) / <alpha-value>);
-  --color-edge-strong: rgb(var(--os-edge-strong) / <alpha-value>);
-  --color-ink: rgb(var(--os-ink) / <alpha-value>);
-  --color-ink-2: rgb(var(--os-ink-2) / <alpha-value>);
-  --color-ink-3: rgb(var(--os-ink-3) / <alpha-value>);
-  --color-danger: rgb(var(--os-danger) / <alpha-value>);
-  --color-warn: rgb(var(--os-warn) / <alpha-value>);
-  --color-ok: rgb(var(--os-ok) / <alpha-value>);
+  --color-canvas: rgb(var(--os-canvas));
+  --color-surface: rgb(var(--os-surface));
+  --color-surface-2: rgb(var(--os-surface-2));
+  --color-surface-3: rgb(var(--os-surface-3));
+  --color-edge: rgb(var(--os-edge));
+  --color-edge-strong: rgb(var(--os-edge-strong));
+  --color-ink: rgb(var(--os-ink));
+  --color-ink-2: rgb(var(--os-ink-2));
+  --color-ink-3: rgb(var(--os-ink-3));
+  --color-danger: rgb(var(--os-danger));
+  --color-warn: rgb(var(--os-warn));
+  --color-ok: rgb(var(--os-ok));
 
   --font-sans: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -52,7 +67,7 @@
   --os-edge-strong: 255 255 255;
   --os-ink: 236 239 246;
   --os-ink-2: 170 178 196;
-  --os-ink-3: 118 126 145;
+  --os-ink-3: 132 139 156;
   --os-danger: 255 99 99;
   --os-warn: 245 179 66;
   --os-ok: 74 209 146;
@@ -72,10 +87,10 @@
   --os-edge-strong: 15 20 40;
   --os-ink: 22 26 38;
   --os-ink-2: 82 90 110;
-  --os-ink-3: 126 134 155;
-  --os-danger: 205 44 60;
-  --os-warn: 176 108 10;
-  --os-ok: 21 138 96;
+  --os-ink-3: 105 111 129;
+  --os-danger: 197 32 49;
+  --os-warn: 158 97 9;
+  --os-ok: 19 126 87;
   --os-edge-a: 0.1;
   --os-edge-strong-a: 0.2;
 }
@@ -138,7 +153,7 @@
 
   /* Visible, consistent focus ring everywhere. */
   :focus-visible {
-    outline: 2px solid rgb(var(--os-accent));
+    outline: 2px solid rgb(var(--os-accent-ink, var(--os-accent)));
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -149,6 +164,14 @@
   textarea {
     font: inherit;
     color: inherit;
+  }
+
+  /* Accessibility ▸ "Always show focus outlines": promote :focus-visible to
+     plain :focus, so the ring appears for pointer users too. */
+  :root[data-focus-ring="always"] :focus {
+    outline: 2px solid rgb(var(--os-accent-ink, var(--os-accent)));
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 
   [hidden] {

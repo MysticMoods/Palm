@@ -1,6 +1,6 @@
-import { cloneElement, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ReactElement, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { cn } from '../../utils/cn';
 
 type Side = 'top' | 'bottom' | 'left' | 'right';
@@ -9,37 +9,46 @@ export interface TooltipProps {
   content: ReactNode;
   side?: Side;
   delay?: number;
-  children: ReactElement<{
-    onPointerEnter?: (e: React.PointerEvent) => void;
-    onPointerLeave?: (e: React.PointerEvent) => void;
-    onFocus?: (e: React.FocusEvent) => void;
-    onBlur?: (e: React.FocusEvent) => void;
-    ref?: React.Ref<HTMLElement>;
-    'aria-describedby'?: string;
-  }>;
+  children: ReactNode;
   disabled?: boolean;
 }
 
+const TRANSFORMS: Record<Side, string> = {
+  top: 'translate(-50%, -100%)',
+  bottom: 'translate(-50%, 0)',
+  left: 'translate(-100%, -50%)',
+  right: 'translate(0, -50%)',
+};
+
 /**
- * Hover/focus tooltip.
+ * Hover and focus tooltip.
  *
- * Shows on keyboard focus as well as pointer hover, and is wired up with
- * `aria-describedby` so the description is announced rather than being a
- * mouse-only affordance.
+ * The child is wrapped in a `display: contents` span rather than cloned with a
+ * merged ref: the wrapper generates no box of its own, so layout is untouched,
+ * while still catching the bubbled pointer and focus events and giving us an
+ * element to measure. Cloning would mean overwriting whatever ref the child
+ * already had.
+ *
+ * Shows on keyboard focus as well as hover, and is wired with
+ * `aria-describedby` so it is announced rather than being mouse-only.
  */
 export function Tooltip({ content, side = 'top', delay = 350, children, disabled }: TooltipProps) {
   const id = useId();
-  const anchorRef = useRef<HTMLElement | null>(null);
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+
+  const anchorRect = () => {
+    const element = wrapperRef.current?.firstElementChild ?? wrapperRef.current;
+    return element?.getBoundingClientRect() ?? null;
+  };
 
   const show = () => {
     if (disabled) return;
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      const element = anchorRef.current;
-      if (!element) return;
-      const rect = element.getBoundingClientRect();
+      const rect = anchorRect();
+      if (!rect) return;
       const gap = 9;
       const map: Record<Side, { left: number; top: number }> = {
         top: { left: rect.left + rect.width / 2, top: rect.top - gap },
@@ -56,42 +65,22 @@ export function Tooltip({ content, side = 'top', delay = 350, children, disabled
     setPosition(null);
   };
 
-  const transforms: Record<Side, string> = {
-    top: 'translate(-50%, -100%)',
-    bottom: 'translate(-50%, 0)',
-    left: 'translate(-100%, -50%)',
-    right: 'translate(0, -50%)',
-  };
-
-  const child = cloneElement(children, {
-    ref: (node: HTMLElement | null) => {
-      anchorRef.current = node;
-      const { ref } = children as unknown as { ref?: React.Ref<HTMLElement> };
-      if (typeof ref === 'function') ref(node);
-      else if (ref && typeof ref === 'object') (ref as React.RefObject<HTMLElement | null>).current = node;
-    },
-    onPointerEnter: (event: React.PointerEvent) => {
-      children.props.onPointerEnter?.(event);
-      if (event.pointerType !== 'touch') show();
-    },
-    onPointerLeave: (event: React.PointerEvent) => {
-      children.props.onPointerLeave?.(event);
-      hide();
-    },
-    onFocus: (event: React.FocusEvent) => {
-      children.props.onFocus?.(event);
-      show();
-    },
-    onBlur: (event: React.FocusEvent) => {
-      children.props.onBlur?.(event);
-      hide();
-    },
-    'aria-describedby': position ? id : undefined,
-  });
-
   return (
     <>
-      {child}
+      <span
+        ref={wrapperRef}
+        style={{ display: 'contents' }}
+        aria-describedby={position ? id : undefined}
+        onPointerEnter={(event) => {
+          if (event.pointerType !== 'touch') show();
+        }}
+        onPointerLeave={hide}
+        onPointerDown={hide}
+        onFocus={show}
+        onBlur={hide}
+      >
+        {children}
+      </span>
       {position
         ? createPortal(
             <div
@@ -101,7 +90,7 @@ export function Tooltip({ content, side = 'top', delay = 350, children, disabled
                 'anim-fade os-glass-strong pointer-events-none fixed z-[9500] rounded-md px-2 py-1',
                 'text-[11.5px] font-medium text-ink shadow-[var(--shadow-pop)] whitespace-nowrap',
               )}
-              style={{ left: position.left, top: position.top, transform: transforms[side] }}
+              style={{ left: position.left, top: position.top, transform: TRANSFORMS[side] }}
             >
               {content}
             </div>,

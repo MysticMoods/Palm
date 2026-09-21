@@ -60,7 +60,7 @@ export function Modal({
 
   const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl' };
   const tones = {
-    neutral: 'bg-accent-soft text-accent',
+    neutral: 'bg-accent-soft text-accent-ink',
     danger: 'bg-danger/15 text-danger',
     warn: 'bg-warn/15 text-warn',
   };

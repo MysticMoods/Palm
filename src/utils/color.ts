@@ -65,3 +65,51 @@ export function readableForeground(hex: string): string {
 export function isValidHex(value: string): boolean {
   return hexToRgb(value) !== null;
 }
+
+/**
+ * The worst-case surface the accent must stay legible against, per theme.
+ *
+ * This is `--os-surface-2` rather than `--os-surface`: in light mode it is the
+ * darker of the two (so it gives dark text less contrast), and in dark mode it
+ * is the lighter one (so it gives light text less contrast). Clearing it
+ * clears the plain surface too.
+ */
+const SURFACES: Record<'light' | 'dark', RGB> = {
+  light: { r: 241, g: 243, b: 248 },
+  dark: { r: 32, g: 36, b: 48 },
+};
+
+/**
+ * A readable version of the accent colour, as an `"R G B"` triplet.
+ *
+ * The accent is user-chosen, so it may be anything — including a pale yellow
+ * that is unreadable on a white surface. This walks the colour toward black
+ * (light theme) or white (dark theme) until it reaches `target` contrast,
+ * preserving the hue. Fills and borders keep the exact colour; only text uses
+ * this.
+ */
+export function readableAccentTriplet(
+  hex: string,
+  theme: 'light' | 'dark',
+  target = 4.5,
+): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return theme === 'light' ? '46 92 232' : '88 132 255';
+
+  const surface = SURFACES[theme];
+  if (contrastRatio(rgb, surface) >= target) return `${rgb.r} ${rgb.g} ${rgb.b}`;
+
+  const toward = theme === 'light' ? 0 : 255;
+  for (let step = 1; step <= 100; step += 1) {
+    const factor = step / 100;
+    const candidate: RGB = {
+      r: Math.round(rgb.r + (toward - rgb.r) * factor),
+      g: Math.round(rgb.g + (toward - rgb.g) * factor),
+      b: Math.round(rgb.b + (toward - rgb.b) * factor),
+    };
+    if (contrastRatio(candidate, surface) >= target) {
+      return `${candidate.r} ${candidate.g} ${candidate.b}`;
+    }
+  }
+  return theme === 'light' ? '0 0 0' : '255 255 255';
+}

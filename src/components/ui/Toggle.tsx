@@ -58,7 +58,7 @@ export function Toggle({
           name={checked ? 'Check' : 'X'}
           size={11}
           strokeWidth={3}
-          className={checked ? 'text-accent' : 'text-ink-3'}
+          className={checked ? 'text-accent-ink' : 'text-ink-3'}
         />
       </span>
     </button>

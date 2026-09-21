@@ -11,7 +11,7 @@ import { useShellStore } from '../../core/shell/store';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn } from '../../utils/cn';
 import { formatRelative } from '../../utils/format';
-import { panelAnchor } from '../panel-anchor';
+import { panelAnchor, useTaskbarThickness } from '../panel-anchor';
 
 export function NotificationCenter() {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -23,6 +23,8 @@ export function NotificationCenter() {
   const items = useNotificationStore((s) => s.items);
   const markAllRead = useNotificationStore((s) => s.markAllRead);
   const clearAll = useNotificationStore((s) => s.clearAll);
+
+  const taskbarThickness = useTaskbarThickness();
 
   useClickOutside(panelRef, closePanel);
 
@@ -39,7 +41,7 @@ export function NotificationCenter() {
         'overflow-hidden rounded-xl shadow-[var(--shadow-panel)]',
         'max-h-[min(620px,calc(100vh-5rem))]',
       )}
-      style={panelAnchor(position, 'tray')}
+      style={panelAnchor(position, 'tray', taskbarThickness)}
     >
       <header className="flex items-center justify-between gap-2 border-b border-edge/8 px-3.5 py-3">
         <h2 className="text-[13px] font-semibold text-ink">Notifications</h2>
@@ -58,7 +60,7 @@ export function NotificationCenter() {
             disabled={items.length === 0}
             className="rounded-md px-2 py-1 text-[11.5px] text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink disabled:opacity-40"
           >
-            Clear all
+            Wipe  Out
           </button>
         </div>
       </header>
