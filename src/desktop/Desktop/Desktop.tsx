@@ -17,7 +17,6 @@ import {
   gridRows,
   iconForNode,
   layoutIcons,
-  pixelsToCell,
 } from './icon-model';
 import type { DesktopIconModel } from './icon-model';
 import { Wallpaper } from './Wallpaper';
@@ -43,7 +42,6 @@ export function Desktop({ height }: { height: number }) {
   const selection = useDesktopStore((s) => s.selection);
   const renaming = useDesktopStore((s) => s.renaming);
   const sortMode = useDesktopStore((s) => s.sortMode);
-  const setPosition = useDesktopStore((s) => s.setPosition);
   const setPositions = useDesktopStore((s) => s.setPositions);
   const setSelection = useDesktopStore((s) => s.setSelection);
   const setRenaming = useDesktopStore((s) => s.setRenaming);
