@@ -1,9 +1,14 @@
 # Palm OS
 
-A desktop environment that runs entirely in the browser. It has a window
-manager, a virtual filesystem, a shell, twelve applications and a settings
-system — and no backend at all. Everything you create is stored locally in
-IndexedDB and survives a reload.
+A desktop environment that runs in the browser. It has a window manager, a
+virtual filesystem, a shell, twelve applications and a settings system.
+Everything you create is stored locally in IndexedDB and survives a reload —
+there is no account, no server-side state and no telemetry.
+
+A small Node service sits alongside it for two jobs the browser cannot do
+itself: fetching pages for the offline archiver, and serving each installed web
+application from its own origin. The desktop and everything in it is
+client-side.
 
 ![Palm OS desktop](docs/screenshot.png)
 
@@ -187,6 +192,8 @@ os.window.setTitle('Weather — Lisbon');
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — what a browser will not let a web
   page do, and what Palm OS does instead
 - [docs/TESTING.md](docs/TESTING.md) — what was verified and how
+- [docs/HOME-SERVER.md](docs/HOME-SERVER.md) — *proposal, not built*: running
+  Palm OS on an always-on machine so one desktop follows you across devices
 
 ## Data and privacy
 
