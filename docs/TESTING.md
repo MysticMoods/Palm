@@ -13,7 +13,7 @@ about two seconds, with `fake-indexeddb` standing in for browser storage and
 jsdom only where a DOM is genuinely needed.
 
 **End-to-end tests** (`npm run test:e2e`) drive the *production build* in
-headless Firefox and Chromium — 85 tests across boot, every application launching, window
+headless Firefox and Chromium — 89 tests across boot, every application launching, window
 geometry and the switcher, the shell, the Files app, persistence across reload,
 the first-run tour, Palm Disk, installing web applications, browsing modes,
 migration from the previous architecture, origin isolation, the origin's
@@ -288,6 +288,21 @@ the one thing that application exists to do.
 
 Not applied by the dev server, which injects an inline script for Fast Refresh;
 the tests run against the production build, where it is applied.
+
+### Live web applications
+`e2e/liveapps.spec.ts` covers the third way of running a website: not embedded,
+not archived, but opened in its own top-level window and managed from the
+desktop. It asserts that adding one downloads nothing and is granted nothing,
+that launching it opens the **real origin** as a genuine top-level page rather
+than a frame, that closing that window directly is noticed by the desktop —
+there is no event for it, so the manager polls — that the desktop can close it,
+and that an archive which turns out to need a server offers this as the way out.
+
+`src/core/sites/live.test.ts` covers the window manager against a stand-in for
+the cross-origin handle: focusing rather than opening a duplicate, reopening
+once the old window is gone, reporting a blocked pop-up instead of failing
+silently, keeping applications apart, treating a handle that throws as closed,
+and stopping the poll when nothing is open.
 
 ### Losing storage
 Browsers evict origin storage under pressure and do not ask first, so

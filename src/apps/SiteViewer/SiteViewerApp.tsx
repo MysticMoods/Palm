@@ -5,7 +5,7 @@ import { Badge, EmptyState, Notice } from '../../components/ui/Feedback';
 import type { AppProps } from '../../core/app-manager/types';
 import { statusLabel, statusSummary } from '../../core/sites/manifest';
 import { appOrigin } from '../../core/sites/origin';
-import { useSitesStore } from '../../core/sites/store';
+import { siteAppId, useSitesStore } from '../../core/sites/store';
 import { APP_PERMISSION_INFO, ARCHIVE_STATUS } from '../../core/sites/types';
 import type { AppManifest, AppPermission } from '../../core/sites/types';
 import { useOS } from '../../desktop/app-context';
@@ -39,6 +39,7 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
   const installed = useSitesStore((s) => s.installed);
   const setPermissions = useSitesStore((s) => s.setPermissions);
   const revalidate = useSitesStore((s) => s.revalidate);
+  const addLive = useSitesStore((s) => s.addLive);
 
   const manifest = useMemo(
     () => installed.find((candidate) => candidate.id === params?.siteId) ?? null,
@@ -181,7 +182,11 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
               setGeneration((value) => value + 1),
             );
           }}
-          onOpenLive={() => window.open(manifest.source, '_blank', 'noopener,noreferrer')}
+          onUseAsApp={() => {
+            void addLive(manifest.source, { name: manifest.name }).then((added) => {
+              if (added) os.openApp(siteAppId(added.id));
+            });
+          }}
           onRunAnyway={() => setRunAnyway(true)}
         />
       ) : (
@@ -222,12 +227,12 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
 function NeedsConnection({
   manifest,
   onAllowNetwork,
-  onOpenLive,
+  onUseAsApp,
   onRunAnyway,
 }: {
   manifest: AppManifest;
   onAllowNetwork: () => void;
-  onOpenLive: () => void;
+  onUseAsApp: () => void;
   onRunAnyway: () => void;
 }) {
   const reasons = manifest.diagnostics;
@@ -262,8 +267,8 @@ function NeedsConnection({
         </Notice>
 
         <div className="flex flex-wrap justify-center gap-2">
-          <Button variant="primary" icon="Share2" onClick={onOpenLive}>
-            Open the real site
+          <Button variant="primary" icon="ExternalLink" onClick={onUseAsApp}>
+            Use it as an app instead
           </Button>
           <Button variant="secondary" icon="Wifi" onClick={onAllowNetwork}>
             Allow network access
@@ -272,6 +277,12 @@ function NeedsConnection({
             Show it anyway
           </Button>
         </div>
+
+        <p className="text-[11.5px] leading-relaxed text-ink-3">
+          “Use it as an app” keeps it in your start menu but opens the real site in its own window —
+          where it has your session and works properly. Nothing is downloaded, so it needs a
+          connection.
+        </p>
       </div>
     </div>
   );

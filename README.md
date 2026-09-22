@@ -74,9 +74,12 @@ Player, edit and save them, and create new files and folders. It is kept
 deliberately distinct from the virtual filesystem, and never deletes, renames
 or moves anything on your disk. Chromium-only; see below.
 
-**Installed web applications** — archive a self-contained web application from
-a URL (App Store ▸ Web applications, or `fetchsite <url>` in the Terminal) and
-run it later with no network at all.
+**Web applications** — two ways to turn a website into an application, because
+one way was never going to cover the web.
+
+*Download* archives a self-contained app from a URL (App Store ▸ Web
+applications, or `fetchsite <url>` in the Terminal) and runs it later with no
+network at all.
 
 Each one is installed onto **its own origin** — `app-7f31c2a4b901.palm.example`
 — with its own storage, its own service worker and its own permissions. That is
@@ -89,6 +92,13 @@ works offline when it does not.
 This needs a deployment that can route by Host — see
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Where that is unavailable, installing
 is disabled with an explanation rather than falling back to the OS's origin.
+
+*Add as app* downloads nothing. The site goes in your start menu and taskbar,
+and opening it opens the real site in its own browser window — its own origin,
+your own session, working normally. That is the one for YouTube, Gmail, or
+anything you sign in to: those cannot be archived (the work happens on their
+servers) and cannot be framed, and no amount of proxying changes either. Palm
+OS opens that window, notices when you close it, and can bring it back.
 
 ## Keyboard
 

@@ -173,9 +173,22 @@ export const EMPTY_DIAGNOSTICS: ArchiveDiagnostics = {
   truncated: false,
 };
 
+/**
+ * How an installed application runs.
+ *
+ * `archive` is a downloaded copy on its own isolated origin, which works
+ * offline. `live` is the real site, opened in its own browser window on its
+ * own origin — the only way a browser permits using something that refuses to
+ * be framed and needs your session, which is most of the web worth signing in
+ * to. Palm OS manages that window; it cannot see inside it.
+ */
+export type AppKind = 'archive' | 'live';
+
 export interface AppManifest {
   /** `app-<12 hex>`; also the subdomain label of the application's origin. */
   id: string;
+  /** Absent on manifests written before live applications existed. */
+  kind?: AppKind;
   name: string;
   version: string;
   /** The address it was archived from. */

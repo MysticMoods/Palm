@@ -256,8 +256,24 @@ application unable to tell it had failed at all. Relaying arbitrary request
 bodies to arbitrary hosts would be a different product, with a different abuse
 surface.
 
-**What Palm OS does instead:** opening one of these shows what is wrong instead
-of a page that loads and then fails at every request — which is what you get
+**What Palm OS does instead:** it offers the other way of running a website —
+as a **live application**. Nothing is downloaded. The site goes in the start
+menu, the taskbar and search like any other application, and opening it opens
+the real site in its own top-level browser window, on its own origin, with your
+own session. There it simply works: signed in, video playing, downloads and all.
+
+Palm OS manages that window without being able to see into it — it opens it,
+notices when you close it, brings it back and can close it for you. That is the
+whole of what a browser permits an embedded page to do with another origin, and
+it is enough to make a website behave like an installed application.
+
+The honest shape of the trade: full functionality, in a window that is not
+painted inside the desktop. It cannot be painted inside the desktop — a site
+that refuses framing cannot be drawn there at all, and a framed site is a
+third-party context, so it would not have your sign-in even if it agreed.
+
+Opening an *archived* application that turns out to need a server also shows
+what is wrong instead of a page that loads and then fails at every request — which is what you get
 otherwise, since network access is off by default. It names the server the
 application wants, and offers three things: open the real site, allow network
 access, or show it anyway. Allowing network lets it reach that server through

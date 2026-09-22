@@ -133,7 +133,7 @@ test.describe('the App Store', () => {
     await expect(page.getByText(/app-<id>\.localhost:4173/)).toBeVisible();
 
     await page.getByLabel('Address').fill('https://fixture.test/');
-    await page.getByRole('button', { name: 'Install' }).click();
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
 
     const dialog = page.getByRole('dialog', { name: 'Install this web application?' });
     await expect(dialog).toBeVisible();
@@ -160,7 +160,7 @@ test.describe('the App Store', () => {
     // Capture needs a network the fixture cannot provide; the store's default
     // is on, so it is turned off for this test.
     await page.getByRole('checkbox', { name: /Start it once/ }).uncheck();
-    await page.getByRole('button', { name: 'Install' }).click();
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
     await page
       .getByRole('dialog', { name: 'Install this web application?' })
       .getByRole('button', { name: 'Install' })
@@ -277,7 +277,7 @@ test.describe('an application that needs a server', () => {
     expect(await win.locator('iframe').count()).toBe(0);
 
     // Three ways out, including being allowed to look anyway.
-    await expect(win.getByRole('button', { name: 'Open the real site' })).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Use it as an app instead' })).toBeVisible();
     await expect(win.getByRole('button', { name: 'Allow network access' })).toBeVisible();
     await win.getByRole('button', { name: 'Show it anyway' }).click();
     await expect(win.locator('iframe')).toHaveCount(1);
