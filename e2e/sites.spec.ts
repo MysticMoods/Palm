@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test';
 import { Palm } from './fixtures';
-import { installedManifests, routeFixture } from './site-fixture';
+import { installedManifests, routeFixture, waitForInstalls } from './site-fixture';
 
 const test = base.extend<{ palm: Palm }>({
   palm: async ({ page }, use) => {
@@ -19,7 +19,7 @@ test.describe('installing web applications', () => {
       'Installed "Notepad"',
     );
 
-    const [manifest] = await installedManifests(page);
+    const [manifest] = await waitForInstalls(page, 1);
     expect(manifest.missingResources).toEqual([]);
     expect(manifest.status).toBe('COMPLETE');
 
@@ -43,7 +43,7 @@ test.describe('installing web applications', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://fixture.test/ Notepad --no-capture');
 
-    const [manifest] = await installedManifests(page);
+    const [manifest] = await waitForInstalls(page, 1);
     // `STORAGE` is the application's own origin storage, which the browser
     // gives it whatever Palm OS thinks. Network access is off.
     expect(manifest.permissions).toEqual(['STORAGE']);
@@ -98,17 +98,18 @@ test.describe('installing web applications', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://fixture.test/ Notepad --no-capture');
 
+    await waitForInstalls(page, 1);
     const listed = await palm.runCommand('sites');
     expect(listed).toContain('fixture.test');
     expect(listed).toContain('Offline');
 
-    const [manifest] = await installedManifests(page);
+    const [manifest] = await waitForInstalls(page, 1);
     await palm.runCommand(`sites --remove ${manifest.id}`);
     await expect(page.getByRole('log', { name: 'Terminal output' })).toContainText(
       'Removed "Notepad"',
     );
 
-    expect(await installedManifests(page)).toHaveLength(0);
+    await waitForInstalls(page, 0);
   });
 
   test('reports a failure instead of installing something broken', async ({ palm, page }) => {
@@ -181,7 +182,8 @@ test.describe('archive completeness', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
 
-    const [manifest] = await installedManifests(page);
+
+    const [manifest] = await waitForInstalls(page, 1);
     expect(manifest.status).toBe('ONLINE_REQUIRED');
     expect(manifest.diagnostics.websockets).toContain('wss://live.test/stream');
     expect(manifest.diagnostics.backendHints).toContain('/api/board');
@@ -228,7 +230,7 @@ test.describe('archive completeness', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://dynamic.test/ Dynamic --no-capture');
 
-    const before = await installedManifests(page);
+    const before = await waitForInstalls(page, 1);
     expect(before[0].status).toBe('COMPLETE');
 
     // Running it is what exposes the gap; that is what revalidation does.

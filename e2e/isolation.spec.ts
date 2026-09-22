@@ -63,8 +63,12 @@ async function appFrame(page: Page, appId: string): Promise<Frame> {
 /**
  * Read something from the application, re-resolving the frame each time.
  *
- * The frame is replaced whenever the application is reloaded — which changing
- * a permission does — so a handle taken beforehand goes stale.
+ * Every read of an application frame goes through here, for two reasons. The
+ * frame is replaced whenever the application reloads — changing a permission
+ * does that — so a handle taken beforehand goes stale. And a frame caught
+ * mid-navigation has no `document.body` yet, so the read throws; polling a raw
+ * `frame.evaluate` lets that escape the poll and fail the test instead of
+ * retrying, which is an intermittent failure rather than a real one.
  */
 function pollApp<T>(page: Page, appId: string, read: () => string) {
   return expect.poll(
@@ -74,12 +78,18 @@ function pollApp<T>(page: Page, appId: string, read: () => string) {
       try {
         return (await frame.evaluate(read)) as T;
       } catch {
-        // Detached mid-reload; the next poll gets the new one.
+        // Detached mid-reload, or no body yet; the next poll gets the new one.
         return undefined as T | undefined;
       }
     },
     { timeout: 20_000 },
   );
+}
+
+/** Call into the application, once it is loaded enough to answer. */
+async function callApp(page: Page, appId: string, fn: () => void): Promise<void> {
+  await pollApp<string>(page, appId, () => document.body?.dataset.hasBridge ?? '').toBe('true');
+  await findAppFrame(page, appId)!.evaluate(fn);
 }
 
 test.describe('origin isolation', () => {
@@ -165,10 +175,8 @@ test.describe('origin isolation', () => {
     expect(alpha.id).not.toBe(beta.id);
 
     await palm.launch('StoreA');
-    const frameA = await appFrame(page, alpha.id);
-    await expect
-      .poll(() => frameA.evaluate(() => document.body.dataset.wrote), { timeout: 10_000 })
-      .toBe('yes');
+    await appFrame(page, alpha.id);
+    await pollApp<string>(page, alpha.id, () => document.body?.dataset.wrote ?? '').toBe('yes');
 
     await palm.launch('StoreB');
     const frameB = await appFrame(page, beta.id);
@@ -294,31 +302,31 @@ test.describe('the application bridge', () => {
     await palm.launch('Terminal');
     const manifest = await install(palm, 'https://bridge.test/', 'Bridged');
     await palm.launch('Bridged');
-    const frame = await appFrame(page, manifest.id);
+    await appFrame(page, manifest.id);
 
-    await expect
-      .poll(() => frame.evaluate(() => document.body.dataset.hasBridge), { timeout: 10_000 })
-      .toBe('true');
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.hasBridge ?? '').toBe(
+      'true',
+    );
 
     // The request is refused because the permission was never granted, and the
     // application is told why rather than left hanging.
-    await expect
-      .poll(() => frame.evaluate(() => document.body.dataset.notify), { timeout: 10_000 })
-      .toMatch(/^refused/);
-    const message = await frame.evaluate(() => document.body.dataset.notify);
-    expect(message).toContain('Notifications');
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.notify ?? '').toMatch(
+      /^refused: "Notifications"/,
+    );
   });
 
   test('refuses a request Palm OS does not implement', async ({ palm, page }) => {
     await palm.launch('Terminal');
     const manifest = await install(palm, 'https://bridge.test/', 'Bridged');
     await palm.launch('Bridged');
-    const frame = await appFrame(page, manifest.id);
+    await appFrame(page, manifest.id);
 
-    await frame.evaluate(() => (window as unknown as { tryForbidden: () => void }).tryForbidden());
-    await expect
-      .poll(() => frame.evaluate(() => document.body.dataset.forbidden), { timeout: 10_000 })
-      .toMatch(/^refused/);
+    await callApp(page, manifest.id, () =>
+      (window as unknown as { tryForbidden: () => void }).tryForbidden(),
+    );
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.forbidden ?? '').toMatch(
+      /^refused/,
+    );
   });
 
   test('works once the permission is granted', async ({ palm, page }) => {
@@ -344,7 +352,7 @@ test.describe('the application bridge', () => {
      * `tryNotify()` on load — so the outcome recorded on the fresh document is
      * the one made under the new permission.
      */
-    await pollApp<string>(page, manifest.id, () => document.body.dataset.notify ?? '').toBe(
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.notify ?? '').toBe(
       'allowed',
     );
   });

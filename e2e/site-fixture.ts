@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 /**
@@ -148,6 +149,22 @@ export async function routeFixture(page: Page): Promise<void> {
       body: entry.body,
     });
   });
+}
+
+/**
+ * Wait until `count` applications are installed, then return their manifests.
+ *
+ * The shell prompt comes back before an install has finished: installing
+ * crosses to another origin, registers a service worker there and writes the
+ * archive, none of which the terminal waits for. Reading the database straight
+ * after the command works on an idle machine and fails under load, which is
+ * the worst kind of test.
+ */
+export async function waitForInstalls(page: Page, count: number, timeout = 60_000) {
+  await expect
+    .poll(async () => (await installedManifests(page)).length, { timeout })
+    .toBe(count);
+  return installedManifests(page);
 }
 
 /** Every installed manifest, read from Palm OS's own database. */
