@@ -29,11 +29,10 @@ export default defineConfig({
    * System Access API — only exercise there.
    *
    * Chromium is here because it is what most people actually use, and it is
-   * the only engine with a real File System Access API, so Palm Disk's code
-   * path has never run against the genuine thing. It has **not** been verified
-   * locally: this development environment cannot reach Playwright's browser
-   * CDN. CI runs it as a separate non-blocking job, so the results are visible
-   * without an unverified engine gating the build. See docs/TESTING.md.
+   * the only engine with a real File System Access API. Both engines are
+   * required to pass in CI. Note that Chromium cannot be run in every
+   * development environment — a sandbox without access to Playwright's browser
+   * CDN can only run Firefox locally, and relies on CI for the rest.
    */
   projects: [
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },

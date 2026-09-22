@@ -32,14 +32,15 @@ Firefox is the suite of record: it is the strictest of the three engines about
 the platform features Palm OS leans on, and the capability fallbacks — no File
 System Access API — only exercise there.
 
-A Chromium project exists in the Playwright config and **has never been run**.
-This development environment cannot reach Playwright's browser CDN, so the
-engine could not be downloaded. CI runs it as a separate job marked
-`continue-on-error`, so its results are visible without an unverified engine
-gating the build; it should be promoted into the blocking job once green.
-Chromium matters because it is what most people use, and because it is the only
-engine with a real File System Access API — Palm Disk's code path has still
-never run against the genuine thing.
+Chromium runs too, as its own required job in CI, because it is what most
+people use and the only engine with a real File System Access API. It cannot be
+run in every development environment: a sandbox without access to Playwright's
+browser CDN can only run Firefox locally and relies on CI for the rest.
+
+Its first run was worth the trouble. Of 81 tests, 78 passed immediately; the
+three failures found one real product weakness — a service worker reporting
+itself installed from a cached manifest after its storage had been cleared —
+and two tests that were passing by accident in Firefox. See the bug list below.
 
 CI runs type-check, lint, unit tests and build in one job, and the end-to-end
 suite in another.
@@ -431,13 +432,25 @@ Found while porting the browser checks into the repository:
     and focus falls to `<body>` for a moment whenever a button unmounts as the
     step changes. Moved to a window-level listener, as the window switcher
     already does.
-20. **Granting a permission appeared not to work.** Toggling one reloaded the
+20. **An application reported itself installed after its storage was cleared.**
+    The service worker answered the health check from the manifest it holds in
+    memory, so a worker still alive when its origin was evicted kept claiming
+    to be installed while 404ing every request — and Palm OS never offered to
+    repair it. It now checks the entry document is readable from storage.
+    Found by the first Chromium run; invisible in Firefox, where the worker
+    happened to be torn down first.
+21. **Two tests were passing by accident.** The File System Access fallback
+    test relied on the engine not having the API, so it tested nothing in
+    Chromium; and the eviction helper used `deleteDatabase`, which blocks
+    silently while any connection is open, so it could pass by not evicting.
+    Both now arrange the condition explicitly.
+22. **Granting a permission appeared not to work.** Toggling one reloaded the
     application immediately, while the change was still on its way to that
     application's service worker — so it restarted under the old policy and
     the user had to reload again by hand. The reload now waits for the change
     to land. Caught by the end-to-end test asserting a granted permission
     actually takes effect.
-21. **The bridge asked the same question twice, in two vocabularies.** An
+23. **The bridge asked the same question twice, in two vocabularies.** An
     application's `notification` request was routed through the OS's
     *built-in-application* permission system as well as its own, so a request
     the user had already allowed in the application's permission panel was

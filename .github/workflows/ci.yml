@@ -62,13 +62,11 @@ jobs:
           retention-days: 7
 
   # Chromium is the engine most people use, and the only one with a real File
-  # System Access API — but it has never been run against this suite, because
-  # the development environment cannot reach Playwright's browser CDN. Kept
-  # separate and non-blocking so its results are visible without an unverified
-  # engine gating the build. Promote it into the job above once it is green.
+  # System Access API. Kept as its own job rather than merged into the one
+  # above so a failure names the engine immediately, and so the two run in
+  # parallel — the browser download dominates either way.
   e2e-chromium:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
