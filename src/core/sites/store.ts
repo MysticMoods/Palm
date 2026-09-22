@@ -215,9 +215,16 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
         title:
           final.status === ARCHIVE_STATUS.complete
             ? `${final.name} is installed and works offline`
-            : `${final.name} is installed`,
+            : final.status === ARCHIVE_STATUS.onlineRequired
+              ? `${final.name} is installed, but it will not work offline`
+              : `${final.name} is installed, with pieces missing`,
         body: statusSummary(final),
-        urgency: final.status === ARCHIVE_STATUS.complete ? 'normal' : 'low',
+        /*
+         * An archive that will not do what the user expected is the one worth
+         * interrupting for. Marking it low — as this did — put the quietest
+         * notification on the outcome that most needs reading.
+         */
+        urgency: final.status === ARCHIVE_STATUS.complete ? 'low' : 'normal',
       });
       return final;
     } catch (error) {

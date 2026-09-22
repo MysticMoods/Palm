@@ -82,8 +82,15 @@ export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
     <div className="flex flex-col gap-4">
       <Notice tone="neutral" icon="Package" title="Install a web application to use it offline">
         Palm OS downloads the page and everything it needs to run, then installs it on an origin of
-        its own. This suits things that do their work in the browser — an editor, a drawing tool, a
-        formatter. It cannot help a site that asks a server to do the work.
+        its own. This suits things that do their work <strong>in the browser</strong> — an editor, a
+        drawing tool, a calculator, a formatter.
+        <br />
+        <br />
+        It cannot help a site whose work happens on a server. YouTube, Gmail, Google Docs, a social
+        feed, anything you sign in to: the page is only the front of it, and the part that matters
+        stays on their machines. Those install and then do nothing useful, so Palm OS checks and
+        labels them <strong>Online required</strong> rather than letting you find out by opening a
+        blank window.
       </Notice>
 
       <IsolationNotice isolation={isolation} />

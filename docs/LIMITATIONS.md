@@ -239,6 +239,22 @@ calls its own API is marked `ONLINE_REQUIRED`: the front end archived fine, and
 it still needs a server. That is a different thing to tell the user than
 "some files are missing", so it is a different status.
 
+YouTube is the worked example. Archiving `www.youtube.com` succeeds — 99 files,
+54 MB — and is correctly marked `ONLINE_REQUIRED`, with `/api/stats/qoe` among
+the backend calls found in its code. Nothing is wrong with the archive. What
+cannot be downloaded is YouTube: the video streams come from another host under
+short-lived signed URLs, search and recommendations are API calls, and anything
+personal needs a session. The same is true of Gmail, Google Docs, a social feed
+or any site you sign in to.
+
+**What Palm OS does instead:** opening one of these shows what is wrong instead
+of a page that loads and then fails at every request — which is what you get
+otherwise, since network access is off by default. It names the server the
+application wants, and offers three things: open the real site, allow network
+access, or show it anyway. Allowing network lets it reach that server through
+Palm OS, but without cookies, so a sign-in still will not work — and it says so
+rather than letting that be the next surprise.
+
 ## A backup holds an application's manifest, not its files
 
 A backup is written by Palm OS, which cannot read another origin's storage —

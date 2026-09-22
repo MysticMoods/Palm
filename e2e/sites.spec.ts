@@ -253,3 +253,48 @@ test.describe('archive completeness', () => {
     );
   });
 });
+
+test.describe('an application that needs a server', () => {
+  test('says so instead of showing a page that fails silently', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
+    await waitForInstalls(page, 1);
+
+    await palm.launch('Board');
+    const win = palm.window('Board');
+
+    /*
+     * The archive is present and the application would load — and then fail at
+     * every request it makes, because it needs its own server and has no
+     * network permission. Palm OS knows both, so it explains rather than
+     * letting someone watch a blank page.
+     */
+    await expect(win.getByText('Board needs a live connection')).toBeVisible();
+    await expect(win).toContainText('live.test');
+    await expect(win).toContainText('no archive can stand in for that');
+    // The diagnostics that produced the verdict are named, not just asserted.
+    await expect(win).toContainText('/api/board');
+    expect(await win.locator('iframe').count()).toBe(0);
+
+    // Three ways out, including being allowed to look anyway.
+    await expect(win.getByRole('button', { name: 'Open the real site' })).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Allow network access' })).toBeVisible();
+    await win.getByRole('button', { name: 'Show it anyway' }).click();
+    await expect(win.locator('iframe')).toHaveCount(1);
+  });
+
+  test('warns that a sign-in still will not work once network is allowed', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
+    await waitForInstalls(page, 1);
+
+    await palm.launch('Board');
+    const win = palm.window('Board');
+    await win.getByRole('button', { name: 'Allow network access' }).click();
+
+    // Granting network is not the same as being signed in, and saying so up
+    // front is cheaper than the confusion of finding out.
+    await expect(win.getByText(/anything needing a sign-in will still not work/)).toBeVisible();
+    await expect(win.locator('iframe')).toHaveCount(1);
+  });
+});
