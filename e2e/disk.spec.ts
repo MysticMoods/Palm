@@ -117,6 +117,16 @@ test.describe('palm disk', () => {
 test.describe('without the File System Access API', () => {
   // Firefox and Safari never shipped the picker; this is the majority case.
   base('explains itself instead of failing', async ({ page }) => {
+    /*
+     * Removed explicitly rather than relying on the engine not having it.
+     * Firefox has no `showDirectoryPicker`, so this passed there by accident —
+     * and silently tested nothing in Chromium, where the real API exists. The
+     * fallback is what is under test, so the absence has to be arranged.
+     */
+    await page.addInitScript(() => {
+      delete (window as unknown as Record<string, unknown>).showDirectoryPicker;
+    });
+
     const palm = new Palm(page);
     await palm.boot();
     await openDisk(palm);

@@ -399,7 +399,16 @@ export const disk = new DiskVolume();
 
 /** Whether this browser can grant access to a real folder at all. */
 export function diskSupported(): boolean {
-  return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  /*
+   * `typeof`, not `in`: a property defined as `undefined` — which a polyfill
+   * or a shim can leave behind — satisfies `in` and would have Palm OS offer a
+   * picker that then throws.
+   */
+  return (
+    typeof window !== 'undefined' &&
+    typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker ===
+      'function'
+  );
 }
 
 export { categoryForMime };

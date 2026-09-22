@@ -366,7 +366,22 @@ async function handleMessage(data, port, source) {
 
   try {
     if (data.type === 'palm.sw.ping') {
-      return reply({ ok: true, installed: Boolean(await manifest()) });
+      /*
+       * Answered from storage, not from the cached manifest.
+       *
+       * The manifest is held in memory for speed, so a worker that is still
+       * alive when its storage is cleared — which is what eviction looks like
+       * — would go on reporting itself installed while 404ing every request.
+       * Checking that the entry document is actually readable makes
+       * "installed" mean the only thing worth reporting: that this
+       * application can still be served.
+       */
+      const current = await manifest();
+      const entry = current?.entry
+        ? await getFile(await database(), current.entry).catch(() => null)
+        : null;
+      if (current && !entry) manifestCache = null;
+      return reply({ ok: true, installed: Boolean(current && entry) });
     }
 
     if (PRIVILEGED.has(data.type) && !fromInstaller(source)) {

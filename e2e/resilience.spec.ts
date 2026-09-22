@@ -73,7 +73,14 @@ test.describe('when the OS database is evicted', () => {
 });
 
 test.describe('when an application’s archive is evicted', () => {
-  /** Wipe an application origin the way a browser reclaiming space would. */
+  /**
+   * Wipe an application origin the way a browser reclaiming space would.
+   *
+   * The stores are emptied rather than the database dropped: `deleteDatabase`
+   * blocks for as long as anything still holds a connection, and the service
+   * worker may outlive its own unregistration for a moment. A blocked delete
+   * silently does nothing, which would make this test pass by not testing.
+   */
   async function evictApplication(page: Page, appId: string) {
     const origin = `http://${appId}.localhost:4173`;
     const osUrl = page.url();
@@ -83,8 +90,31 @@ test.describe('when an application’s archive is evicted', () => {
       for (const registration of await navigator.serviceWorker.getRegistrations()) {
         await registration.unregister();
       }
+
+      await new Promise<void>((resolve) => {
+        const request = indexedDB.open('palm-app');
+        request.onsuccess = () => {
+          const db = request.result;
+          const names = [...db.objectStoreNames];
+          if (names.length === 0) {
+            db.close();
+            resolve();
+            return;
+          }
+          const tx = db.transaction(names, 'readwrite');
+          for (const name of names) tx.objectStore(name).clear();
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+          tx.onerror = () => {
+            db.close();
+            resolve();
+          };
+        };
+        request.onerror = () => resolve();
+      });
     });
-    await deleteDatabase(page, 'palm-app');
     await page.goto(osUrl);
   }
 
