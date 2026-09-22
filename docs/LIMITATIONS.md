@@ -181,6 +181,15 @@ site data in browser settings erases Palm OS.
 `navigator.storage.persist()` to request eviction protection (browsers grant
 this at their discretion), and provides a full JSON export.
 
+Recovery is the part that has to work regardless, so it is tested rather than
+assumed. If the OS database is gone at boot, Palm OS re-seeds a filesystem and
+comes up normally instead of failing — losing the files, which is what eviction
+means, but not the desktop. If an *application's* origin is cleared, Palm OS
+notices its files are missing, says so in the App Store, and offers to download
+it again from the address in its manifest, keeping the same origin so anything
+the application stored for itself survives. `e2e/resilience.spec.ts` evicts
+both and asserts each recovers.
+
 ## Installed applications run third-party code — on their own origin
 
 Palm OS can archive a self-contained web application and run it later with no
@@ -230,11 +239,21 @@ calls its own API is marked `ONLINE_REQUIRED`: the front end archived fine, and
 it still needs a server. That is a different thing to tell the user than
 "some files are missing", so it is a different status.
 
-## Installed applications are not included in backups
+## A backup holds an application's manifest, not its files
 
 A backup is written by Palm OS, which cannot read another origin's storage —
-the same property that keeps applications out of the OS's data. Settings,
-files and OS application data export and import as before.
+the same property that keeps applications out of the OS's data.
+
+**What Palm OS does instead:** the manifest travels, including the address the
+application was archived from. Restoring a backup brings the application list
+back, marks each one as needing its files, and offers to download it again in
+one click. What cannot come back is whatever the application stored for itself
+— your drawings inside an archived drawing tool live on its origin, not in the
+OS. An application granted `FILES` can save through the bridge into the Palm OS
+filesystem, and that *is* backed up.
+
+The same machinery covers eviction: a browser reclaiming space from an
+application origin produces exactly the same state, and the same repair.
 
 ## The fetch service is a server, and it is the one server here
 

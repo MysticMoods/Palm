@@ -53,16 +53,31 @@ interface SitesState {
   ready: boolean;
   /** Set when applications from the pre-isolation architecture were moved. */
   migrated: number;
+  /**
+   * Applications whose manifest Palm OS holds but whose files are gone from
+   * their own origin — a restored backup, or storage the browser reclaimed.
+   */
+  missingArchives: string[];
 
   load: () => Promise<void>;
   install: (url: string, options?: InstallOptions) => Promise<AppManifest | null>;
+  reinstall: (id: string) => Promise<AppManifest | null>;
   uninstall: (id: string) => Promise<void>;
   setPermissions: (id: string, permissions: AppPermission[]) => Promise<void>;
   revalidate: (id: string) => Promise<AppManifest | null>;
+  verifyArchives: () => Promise<string[]>;
 }
 
 export interface InstallOptions {
   name?: string;
+  /**
+   * Reuse an existing application id instead of minting one.
+   *
+   * Re-downloading keeps the origin, so whatever the application stored for
+   * itself survives — losing someone's documents to fix a missing archive
+   * would be a strange trade.
+   */
+  appId?: string;
   /**
    * Start the application once, with network access, so the resources it loads
    * at runtime are captured too. On by default: without it, anything that
@@ -123,6 +138,7 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
   downloading: {},
   ready: false,
   migrated: 0,
+  missingArchives: [],
 
   /* ------------------------------- Loading ------------------------------ */
 
@@ -133,6 +149,14 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
 
     // Applications from before origin isolation are moved on first boot.
     if (await hasLegacyApps()) void migrateOnBoot(set, get);
+
+    /*
+     * Check the archives are actually still there — after a restored backup
+     * they will not be, and a browser under storage pressure can reclaim an
+     * application origin. Deliberately not awaited: it loads a frame per
+     * application, and the desktop should not wait on it.
+     */
+    if (installed.length > 0) void get().verifyArchives();
   },
 
   /* ------------------------------ Installing ---------------------------- */
@@ -161,6 +185,7 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
 
       const { manifest, files } = await archiveSite(normalised, {
         name: options.name,
+        appId: options.appId,
         onProgress: progress,
       });
 
@@ -180,7 +205,11 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
 
       await installedApps.save(final);
       publish(final);
-      set((state) => ({ installed: [final, ...state.installed.filter((m) => m.id !== final.id)] }));
+      set((state) => ({
+        installed: [final, ...state.installed.filter((m) => m.id !== final.id)],
+        // Whatever was missing about this one no longer is.
+        missingArchives: state.missingArchives.filter((id) => id !== final.id),
+      }));
 
       notifications.push('app-store', {
         title:
@@ -207,6 +236,53 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
     }
   },
 
+  /**
+   * Download an application again, keeping its id and therefore its origin.
+   *
+   * Used when the files are gone but the manifest is not: a backup restored
+   * onto a fresh browser, or storage the browser reclaimed under pressure.
+   */
+  reinstall: async (id) => {
+    const manifest = get().installed.find((candidate) => candidate.id === id);
+    if (!manifest) return null;
+    return get().install(manifest.source, {
+      name: manifest.name,
+      appId: manifest.id,
+      captureRuntime: false,
+    });
+  },
+
+  /* ------------------------------ Verifying ----------------------------- */
+
+  /**
+   * Ask each application's origin whether it still has its files.
+   *
+   * Palm OS cannot read that storage, so the only way to know is to ask the
+   * service worker over there. Done one at a time: each check loads a frame on
+   * another origin, and doing several at once for no benefit would make boot
+   * feel worse than it is.
+   */
+  verifyArchives: async () => {
+    const missing: string[] = [];
+
+    for (const manifest of get().installed) {
+      try {
+        const present = await withAppOrigin(manifest.id, async (channel) => {
+          const result = await channel.send('palm.status');
+          return result?.installed === true;
+        });
+        if (!present) missing.push(manifest.id);
+      } catch {
+        // An origin that cannot be reached at all counts as missing; the
+        // remedy offered is the same either way.
+        missing.push(manifest.id);
+      }
+    }
+
+    set({ missingArchives: missing });
+    return missing;
+  },
+
   /* ----------------------------- Uninstalling --------------------------- */
 
   uninstall: async (id) => {
@@ -225,7 +301,10 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
     await installedApps.remove(id);
     useAppStore.getState().uninstall(siteAppId(id));
     unregisterApp(siteAppId(id));
-    set((state) => ({ installed: state.installed.filter((manifest) => manifest.id !== id) }));
+    set((state) => ({
+      installed: state.installed.filter((manifest) => manifest.id !== id),
+      missingArchives: state.missingArchives.filter((candidate) => candidate !== id),
+    }));
   },
 
   /* ------------------------------ Permissions --------------------------- */

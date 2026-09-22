@@ -201,6 +201,9 @@ through the SSRF-guarded fetch service, with no cookies — but it does run, and
 the install dialog says so before anything is downloaded. It can be turned off,
 at the cost of an incomplete archive.
 
-**Installed applications are not included in backups.** A backup is written by
-Palm OS, which cannot read another origin's storage. The manifests could be
-exported so a restore could offer to reinstall; the bytes could not.
+**A backup carries an application's manifest, never its files.** A backup is
+written by Palm OS, which cannot read another origin's storage — the same
+property that keeps an application out of your data. So a restore brings back
+what was installed and the address it came from, and Palm OS offers to download
+it again; it cannot bring back the bytes, or anything the application stored
+for itself.

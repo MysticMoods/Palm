@@ -43,6 +43,8 @@ export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
   const install = useSitesStore((s) => s.install);
   const uninstall = useSitesStore((s) => s.uninstall);
   const setPermissions = useSitesStore((s) => s.setPermissions);
+  const reinstall = useSitesStore((s) => s.reinstall);
+  const missingArchives = useSitesStore((s) => s.missingArchives);
   const network = useNetwork();
 
   useEffect(() => {
@@ -188,7 +190,9 @@ export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
               <InstalledRow
                 key={manifest.id}
                 manifest={manifest}
+                filesMissing={missingArchives.includes(manifest.id)}
                 onOpen={() => onOpen(siteAppId(manifest.id))}
+                onReinstall={() => void reinstall(manifest.id)}
                 onRemove={() => setConfirmRemove(manifest)}
                 onToggleNetwork={(enabled) =>
                   void setPermissions(
@@ -293,12 +297,16 @@ function IsolationNotice({ isolation }: { isolation: IsolationStatus | null }) {
 
 function InstalledRow({
   manifest,
+  filesMissing,
   onOpen,
+  onReinstall,
   onRemove,
   onToggleNetwork,
 }: {
   manifest: AppManifest;
+  filesMissing: boolean;
   onOpen: () => void;
+  onReinstall: () => void;
   onRemove: () => void;
   onToggleNetwork: (enabled: boolean) => void;
 }) {
@@ -318,8 +326,14 @@ function InstalledRow({
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-[13px] font-medium text-ink">
             {manifest.name}
-            <Badge tone={STATUS_TONE[manifest.status]}>{statusLabel(manifest.status)}</Badge>
-            <Badge tone={online ? 'warn' : 'ok'}>{online ? 'Online' : 'Offline'}</Badge>
+            {filesMissing ? (
+              <Badge tone="danger">Files missing</Badge>
+            ) : (
+              <>
+                <Badge tone={STATUS_TONE[manifest.status]}>{statusLabel(manifest.status)}</Badge>
+                <Badge tone={online ? 'warn' : 'ok'}>{online ? 'Online' : 'Offline'}</Badge>
+              </>
+            )}
             <Badge tone="neutral">Isolated</Badge>
           </p>
           <p className="truncate text-[11px] text-ink-3">
@@ -328,9 +342,15 @@ function InstalledRow({
           </p>
         </div>
         <div className="flex shrink-0 gap-1.5">
-          <Button size="sm" variant="primary" icon="Play" onClick={onOpen}>
-            Open
-          </Button>
+          {filesMissing ? (
+            <Button size="sm" variant="primary" icon="Download" onClick={onReinstall}>
+              Download again
+            </Button>
+          ) : (
+            <Button size="sm" variant="primary" icon="Play" onClick={onOpen}>
+              Open
+            </Button>
+          )}
           <Button size="sm" variant="ghost" icon="Info" onClick={() => setShowDetails(!showDetails)}>
             Details
           </Button>
@@ -340,7 +360,11 @@ function InstalledRow({
         </div>
       </div>
 
-      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-2">{statusSummary(manifest)}</p>
+      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-2">
+        {filesMissing
+          ? `The files for this application are no longer on its origin — either this is a restored backup, or the browser reclaimed the space. Palm OS still knows what it was, and can download it again from ${manifest.primaryHost}.`
+          : statusSummary(manifest)}
+      </p>
 
       {showDetails ? (
         <div className="mt-2.5 flex flex-col gap-2 rounded-lg bg-surface-3/40 p-2.5 text-[11px] text-ink-3">

@@ -13,11 +13,11 @@ about two seconds, with `fake-indexeddb` standing in for browser storage and
 jsdom only where a DOM is genuinely needed.
 
 **End-to-end tests** (`npm run test:e2e`) drive the *production build* in
-headless Firefox — 77 tests across boot, every application launching, window
+headless Firefox — 81 tests across boot, every application launching, window
 geometry and the switcher, the shell, the Files app, persistence across reload,
 the first-run tour, Palm Disk, installing web applications, browsing modes,
-migration from the previous architecture, origin isolation and the origin's
-content security policy. They run against the real bundle on purpose:
+migration from the previous architecture, origin isolation, the origin's
+content security policy, and recovery from evicted storage. They run against the real bundle on purpose:
 the bugs worth catching at this level — stacking contexts, animation fill
 modes, lazy chunk loading — only appear there.
 
@@ -265,8 +265,7 @@ permission is dropped again afterwards, and the resource it could not get is
 named in a PARTIAL archive. The capture path itself was exercised manually
 against the real internet.
 
-**Not verified here either:** long-term survival of an archive across browser
-storage eviction, and a production wildcard-DNS deployment with real
+**Not verified here either:** a production wildcard-DNS deployment with real
 certificates — `*.localhost` exercises the same browser behaviour (distinct
 origin, secure context, per-origin service worker) but not the DNS and TLS
 setup described in DEPLOYMENT.md.
@@ -288,6 +287,29 @@ the one thing that application exists to do.
 
 Not applied by the dev server, which injects an inline script for Fast Refresh;
 the tests run against the production build, where it is applied.
+
+### Losing storage
+Browsers evict origin storage under pressure and do not ask first, so
+`e2e/resilience.spec.ts` deletes databases and checks what happens.
+
+Deleting the OS's own database and reloading: the desktop comes up, the
+filesystem is re-seeded, and no console errors are produced. The file created
+beforehand is gone — that is what eviction means, and a test that pretended
+otherwise would be testing nothing.
+
+Deleting an *application's* database and unregistering its worker, which is
+also the exact state a restored backup leaves behind: Palm OS reports "Files
+missing" in the App Store with an explanation, and the "Download again" button
+repairs it from the address in the manifest. A second test asserts the
+application keeps the **same id**, because the id is the origin and the origin
+is where the application keeps its own data — minting a new one to fix a
+missing archive would silently discard whatever the user had saved in it.
+
+`src/core/backup.roundtrip.test.ts` covers the other half against a real
+IndexedDB: an export carries manifests but no archived bytes, a restore brings
+the application list back, a manifest without a `source` is refused because it
+could never be repaired, and a version 1 backup with no application list at all
+still restores.
 
 ### Crash isolation
 A deliberately throwing application was registered, built and launched. It

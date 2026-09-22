@@ -17,7 +17,7 @@ const node = (over: Partial<FSNode>): FSNode => ({
 
 const root = node({ id: 'root', name: '', parentId: null, kind: 'folder', mime: 'inode/directory' });
 
-const backup = (nodes: FSNode[]) => ({
+const backup = (nodes: FSNode[], extra: Record<string, unknown> = {}) => ({
   format: BACKUP_FORMAT,
   version: 1,
   osVersion: '1.0.0',
@@ -25,6 +25,16 @@ const backup = (nodes: FSNode[]) => ({
   nodes,
   contents: [],
   kv: [],
+  ...extra,
+});
+
+const manifest = (over: Record<string, unknown> = {}) => ({
+  id: 'app-7f31c2a4b901',
+  name: 'Fixture',
+  source: 'https://fixture.test/',
+  entry: '/index.html',
+  primaryHost: 'fixture.test',
+  ...over,
 });
 
 describe('validateBackup', () => {
@@ -102,5 +112,42 @@ describe('validateBackup', () => {
       backup([root, node({ id: 'f', kind: 'folder', mime: 'inode/directory' }), node({ id: 'a' })]),
     );
     expect(result.summary).toMatchObject({ files: 1, folders: 1 });
+  });
+});
+
+
+describe('validateBackup — installed applications', () => {
+  it('counts restorable application manifests', () => {
+    const result = validateBackup(backup([root], { apps: [manifest()] }));
+    expect(result.valid).toBe(true);
+    expect(result.summary?.apps).toBe(1);
+  });
+
+  it('accepts a version 1 backup, which predates applications entirely', () => {
+    const result = validateBackup(backup([root]));
+    expect(result.valid).toBe(true);
+    expect(result.summary?.apps).toBe(0);
+  });
+
+  it('rejects an application list that is not a list', () => {
+    expect(validateBackup(backup([root], { apps: 'nope' })).valid).toBe(false);
+  });
+
+  it('does not count a manifest missing what re-downloading needs', () => {
+    // Without `source` there is no address to fetch from, so restoring it
+    // would leave an application that can never be repaired.
+    const result = validateBackup(
+      backup([root], { apps: [manifest(), { id: 'app-000000000000', name: 'No source' }] }),
+    );
+    expect(result.valid).toBe(true);
+    expect(result.summary?.apps).toBe(1);
+  });
+
+  it('does not count a manifest whose id is not a valid origin label', () => {
+    // The id becomes a subdomain; anything else could not be served.
+    const result = validateBackup(
+      backup([root], { apps: [manifest({ id: '../evil' }), manifest({ id: 'app-NOTHEX' })] }),
+    );
+    expect(result.summary?.apps).toBe(0);
   });
 });
