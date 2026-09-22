@@ -220,14 +220,45 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(handle(event));
 });
 
+/**
+ * Anything that is not a GET.
+ *
+ * A POST is by definition asking a server to do something, and an archive is
+ * not a server. The reply is JSON with a failing status, because these are
+ * almost always API calls: an application that is handed an HTML page with a
+ * 200 cannot even tell that it failed.
+ *
+ * Cross-origin writes are let through when network access is granted — those
+ * are the application talking to somebody else, under ordinary CORS rules.
+ * Same-origin writes are the application talking to *its own* server, which is
+ * now us, and we do not have what it is asking for. Palm OS archives; it does
+ * not proxy writes, and pretending otherwise would mean relaying arbitrary
+ * request bodies to arbitrary hosts.
+ */
 async function handleNonGet(request) {
   const current = await manifest();
-  if (current?.permissions?.includes('NETWORK')) return fetch(request);
-  recordMiss(request.url, 'network-blocked');
-  return new Response('This application is installed offline, so it cannot send data to a server.', {
-    status: 503,
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-  });
+  const allowed = Boolean(current?.permissions?.includes('NETWORK'));
+  const sameOrigin = new URL(request.url).origin === self.location.origin;
+
+  if (allowed && !sameOrigin) return fetch(request);
+
+  const reason = allowed ? 'cannot-forward-write' : 'network-blocked';
+  recordMiss(request.url, reason);
+
+  return new Response(
+    JSON.stringify({
+      error: 'palm-os-archive',
+      reason,
+      message: allowed
+        ? 'Palm OS holds a downloaded copy of this application, not the server it talks to. ' +
+          'Requests that send data cannot be answered.'
+        : 'This application has no network permission, so it cannot send data to a server.',
+    }),
+    {
+      status: allowed ? 501 : 503,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    },
+  );
 }
 
 async function handle(event) {

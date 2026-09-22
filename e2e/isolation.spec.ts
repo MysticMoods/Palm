@@ -297,6 +297,86 @@ test.describe('application policy', () => {
   });
 });
 
+test.describe('requests an archive cannot answer', () => {
+  /**
+   * A POST is asking a server to do something, and an archive is not a server.
+   *
+   * What matters is *how* it fails. These are almost always API calls, so an
+   * HTML page with a 200 — which is what the server's bootstrap document used
+   * to give them — leaves the application unable to tell it failed at all.
+   */
+  test('fails a write with JSON and a failing status, not an HTML page', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+    const frame = await appFrame(page, manifest.id);
+
+    const result = await frame.evaluate(async () => {
+      const response = await fetch('/api/save', {
+        method: 'POST',
+        body: JSON.stringify({ hello: 'world' }),
+      });
+      return {
+        status: response.status,
+        type: response.headers.get('content-type'),
+        body: await response.text(),
+      };
+    });
+
+    expect(result.status).toBe(503);
+    expect(result.type).toContain('application/json');
+    expect(result.body).not.toContain('<!doctype');
+    expect(JSON.parse(result.body)).toMatchObject({ reason: 'network-blocked' });
+  });
+
+  test('still refuses to forward a write once network is allowed', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+
+    await page.getByRole('button', { name: 'About this application' }).click();
+    const toggle = page
+      .locator('label', { hasText: 'Contact servers over the internet' })
+      .locator('input[type="checkbox"]')
+      .first();
+    await toggle.click();
+    await expect(toggle).toBeChecked();
+
+    /*
+     * Network permission lets the application *read* from the web. It does not
+     * make Palm OS a write proxy: relaying arbitrary request bodies to
+     * arbitrary hosts is a different product, and one with an abuse surface.
+     */
+    const body = await pollWrite(page, manifest.id);
+    expect(body.status).toBe(501);
+    expect(JSON.parse(body.text)).toMatchObject({ reason: 'cannot-forward-write' });
+  });
+});
+
+/** POST from inside the application, re-resolving the frame as it reloads. */
+async function pollWrite(page: Page, appId: string) {
+  let last: { status: number; text: string } = { status: 0, text: '' };
+  await expect
+    .poll(
+      async () => {
+        const frame = findAppFrame(page, appId);
+        if (!frame) return 0;
+        try {
+          last = await frame.evaluate(async () => {
+            const response = await fetch('/api/save', { method: 'POST', body: '{}' });
+            return { status: response.status, text: await response.text() };
+          });
+          return last.status;
+        } catch {
+          return 0;
+        }
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(501);
+  return last;
+}
+
 test.describe('the application bridge', () => {
   test('is offered to the application but grants nothing by default', async ({ palm, page }) => {
     await palm.launch('Terminal');

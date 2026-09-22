@@ -247,6 +247,15 @@ short-lived signed URLs, search and recommendations are API calls, and anything
 personal needs a session. The same is true of Gmail, Google Docs, a social feed
 or any site you sign in to.
 
+Allowing network access does not rescue them. It lets an application *read*
+from the web; it does not make Palm OS a write proxy. A `POST` to the
+application's own origin is the application asking its own server for
+something, and an archive does not have it — so it is refused with JSON and a
+failing status, rather than the HTML page and a `200` that would leave the
+application unable to tell it had failed at all. Relaying arbitrary request
+bodies to arbitrary hosts would be a different product, with a different abuse
+surface.
+
 **What Palm OS does instead:** opening one of these shows what is wrong instead
 of a page that loads and then fails at every request — which is what you get
 otherwise, since network access is off by default. It names the server the

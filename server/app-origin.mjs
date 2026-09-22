@@ -150,6 +150,27 @@ export function appOriginMiddleware(req, res, next, options = {}) {
     return next?.();
   }
 
+  /*
+   * Only a navigation gets the bootstrap document. A write reaching the server
+   * means the application asked its own server for something and the service
+   * worker was not there to say no — answering with an HTML page and a 200
+   * would tell it the request succeeded.
+   */
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.statusCode = 405;
+    res.setHeader('Allow', 'GET, HEAD');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(
+      JSON.stringify({
+        error: 'palm-os-archive',
+        message:
+          'This is a downloaded copy of an application, not the server it talks to. ' +
+          'Requests that send data cannot be answered.',
+      }),
+    );
+    return;
+  }
+
   res.statusCode = 200;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');

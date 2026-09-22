@@ -13,7 +13,7 @@ about two seconds, with `fake-indexeddb` standing in for browser storage and
 jsdom only where a DOM is genuinely needed.
 
 **End-to-end tests** (`npm run test:e2e`) drive the *production build* in
-headless Firefox and Chromium — 83 tests across boot, every application launching, window
+headless Firefox and Chromium — 85 tests across boot, every application launching, window
 geometry and the switcher, the shell, the Files app, persistence across reload,
 the first-run tour, Palm Disk, installing web applications, browsing modes,
 migration from the previous architecture, origin isolation, the origin's
