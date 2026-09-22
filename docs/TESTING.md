@@ -13,7 +13,7 @@ about two seconds, with `fake-indexeddb` standing in for browser storage and
 jsdom only where a DOM is genuinely needed.
 
 **End-to-end tests** (`npm run test:e2e`) drive the *production build* in
-headless Firefox and Chromium — 89 tests across boot, every application launching, window
+headless Firefox and Chromium — 91 tests across boot, every application launching, window
 geometry and the switcher, the shell, the Files app, persistence across reload,
 the first-run tour, Palm Disk, installing web applications, browsing modes,
 migration from the previous architecture, origin isolation, the origin's
@@ -297,6 +297,13 @@ that launching it opens the **real origin** as a genuine top-level page rather
 than a frame, that closing that window directly is noticed by the desktop —
 there is no event for it, so the manager polls — that the desktop can close it,
 and that an archive which turns out to need a server offers this as the way out.
+
+Converting is covered too, because the escape hatch is only useful if it is
+reachable from where people actually are. Granting network access used to
+dismiss the panel the way out lived on, leaving a broken page and no next step;
+the offer now sits in the warning strip and is asserted there. A second test
+checks the swap **replaces** the archive rather than adding a second entry of
+the same name.
 
 `src/core/sites/live.test.ts` covers the window manager against a stand-in for
 the cross-origin handle: focusing rather than opening a duplicate, reopening

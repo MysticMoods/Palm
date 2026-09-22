@@ -117,14 +117,90 @@ test.describe('adding a site as a live app', () => {
     await page.context().route('https://live.test/**', (route) =>
       route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Live Board</h1>' }),
     );
+    await win.getByRole('button', { name: 'Use it as an app instead' }).click();
     const [popup] = await Promise.all([
       context.waitForEvent('page'),
-      win.getByRole('button', { name: 'Use it as an app instead' }).click(),
+      page
+        .getByRole('dialog', { name: /Use Board as an app instead/ })
+        .getByRole('button', { name: 'Use as an app' })
+        .click(),
     ]);
     await popup.waitForLoadState('domcontentloaded');
 
     expect(new URL(popup.url()).origin).toBe('https://live.test');
     const manifests = await installedManifests(page);
     expect(manifests.some((entry) => entry.kind === 'live')).toBe(true);
+  });
+});
+
+test.describe('converting a downloaded copy that cannot work', () => {
+  test('offers the swap even after network access was allowed', async ({ palm, page, context }) => {
+    await palm.launch('Terminal');
+    await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
+    await expect
+      .poll(async () => (await installedManifests(page)).length, { timeout: 30_000 })
+      .toBe(1);
+
+    await palm.launch('Board');
+    const win = palm.window('Board');
+
+    // Granting network removes the panel — which is where the way out used to
+    // live, leaving someone with a broken page and no next step.
+    await win.getByRole('button', { name: 'Allow network access' }).click();
+    await expect(win.locator('iframe')).toHaveCount(1);
+
+    const strip = win.getByText(/the part that does the work stays on their servers/);
+    await expect(strip).toBeVisible();
+
+    await context.route('https://live.test/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Live Board</h1>' }),
+    );
+    await win.getByRole('button', { name: 'Use it as an app instead' }).click();
+
+    const dialog = page.getByRole('dialog', { name: /Use Board as an app instead/ });
+    await expect(dialog).toBeVisible();
+    // The download is discarded, so that is said before it happens.
+    await expect(dialog).toContainText('downloaded copy is removed');
+
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      dialog.getByRole('button', { name: 'Use as an app' }).click(),
+    ]);
+    await popup.waitForLoadState('domcontentloaded');
+    expect(new URL(popup.url()).origin).toBe('https://live.test');
+  });
+
+  test('replaces the archive rather than leaving two of the same name', async ({ palm, page, context }) => {
+    await palm.launch('Terminal');
+    await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
+    await expect
+      .poll(async () => (await installedManifests(page)).length, { timeout: 30_000 })
+      .toBe(1);
+
+    await context.route('https://live.test/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Live Board</h1>' }),
+    );
+
+    await palm.launch('Board');
+    const win = palm.window('Board');
+    await win.getByRole('button', { name: 'Use it as an app instead' }).click();
+    await Promise.all([
+      context.waitForEvent('page'),
+      page
+        .getByRole('dialog', { name: /Use Board as an app instead/ })
+        .getByRole('button', { name: 'Use as an app' })
+        .click(),
+    ]);
+
+    /*
+     * One entry, not two. Keeping a dead download alongside a working one of
+     * the same name is worse than not offering the swap at all.
+     */
+    await expect
+      .poll(async () => (await installedManifests(page)).length, { timeout: 30_000 })
+      .toBe(1);
+    const [only] = await installedManifests(page);
+    expect(only.kind).toBe('live');
+    expect(only.name).toBe('Board');
   });
 });

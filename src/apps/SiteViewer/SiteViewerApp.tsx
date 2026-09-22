@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../components/icons';
 import { Button, IconButton } from '../../components/ui/Button';
 import { Badge, EmptyState, Notice } from '../../components/ui/Feedback';
+import { ConfirmDialog } from '../../components/ui/Modal';
 import type { AppProps } from '../../core/app-manager/types';
 import { statusLabel, statusSummary } from '../../core/sites/manifest';
 import { appOrigin } from '../../core/sites/origin';
@@ -35,11 +36,12 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
   const [refusal, setRefusal] = useState<string | null>(null);
   /** Set when the user asks to see an application we expect not to work. */
   const [runAnyway, setRunAnyway] = useState(false);
+  const [confirmConvert, setConfirmConvert] = useState(false);
 
   const installed = useSitesStore((s) => s.installed);
   const setPermissions = useSitesStore((s) => s.setPermissions);
   const revalidate = useSitesStore((s) => s.revalidate);
-  const addLive = useSitesStore((s) => s.addLive);
+  const convertToLive = useSitesStore((s) => s.convertToLive);
 
   const manifest = useMemo(
     () => installed.find((candidate) => candidate.id === params?.siteId) ?? null,
@@ -182,19 +184,25 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
               setGeneration((value) => value + 1),
             );
           }}
-          onUseAsApp={() => {
-            void addLive(manifest.source, { name: manifest.name }).then((added) => {
-              if (added) os.openApp(siteAppId(added.id));
-            });
-          }}
+          onUseAsApp={() => setConfirmConvert(true)}
           onRunAnyway={() => setRunAnyway(true)}
         />
       ) : (
       <>
-      {online && manifest.networkRequired ? (
-        <div className="shrink-0 border-b border-warn/25 bg-warn/8 px-3 py-1.5 text-[11.5px] text-warn">
-          This application talks to {manifest.primaryHost}. Requests go through Palm OS without your
-          cookies, so anything needing a sign-in will still not work.
+      {manifest.networkRequired ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-warn/25 bg-warn/8 px-3 py-1.5 text-[11.5px] text-warn">
+          <span className="min-w-0 flex-1">
+            This is a downloaded copy of {manifest.primaryHost}, and the part that does the work
+            stays on their servers. Requests go through Palm OS without your cookies, so searching
+            or signing in will not work here.
+          </span>
+          <button
+            type="button"
+            onClick={() => setConfirmConvert(true)}
+            className="shrink-0 rounded-full bg-warn px-2.5 py-0.5 text-[11px] font-medium text-[var(--os-bg)]"
+          >
+            Use it as an app instead
+          </button>
         </div>
       ) : null}
       {/*
@@ -212,6 +220,26 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
       />
       </>
       )}
+
+      <ConfirmDialog
+        open={confirmConvert}
+        title={`Use ${manifest.name} as an app instead?`}
+        description={`${manifest.primaryHost} will open in its own browser window, where it has your session and works normally. Nothing is downloaded, so it needs a connection.`}
+        confirmLabel="Use as an app"
+        onConfirm={() => {
+          setConfirmConvert(false);
+          void convertToLive(manifest.id).then((live) => {
+            if (live) os.openApp(siteAppId(live.id));
+          });
+        }}
+        onCancel={() => setConfirmConvert(false)}
+      >
+        <p className="text-[12px] leading-relaxed text-ink-2">
+          The downloaded copy is removed. It cannot be made to work — the pages are here, but the
+          server they talk to is not, and no archive can stand in for that. You can download it
+          again later if you want to.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

@@ -20,6 +20,7 @@ import { create } from 'zustand';
 import { lazy } from 'react';
 import { appSecurityHeaders } from '../../../shared/app-policy.mjs';
 import { registerApp, unregisterApp } from '../app-manager/registry';
+import { openApp } from '../os';
 import { useAppStore } from '../app-manager/store';
 import { notifications } from '../notifications/store';
 import { archiveSite } from './archive';
@@ -69,6 +70,8 @@ interface SitesState {
   install: (url: string, options?: InstallOptions) => Promise<AppManifest | null>;
   /** Add a site that runs live, in its own window, without downloading it. */
   addLive: (url: string, options?: { name?: string }) => Promise<AppManifest | null>;
+  /** Replace a downloaded copy that cannot work with a live application. */
+  convertToLive: (id: string) => Promise<AppManifest | null>;
   reinstall: (id: string) => Promise<AppManifest | null>;
   uninstall: (id: string) => Promise<void>;
   setPermissions: (id: string, permissions: AppPermission[]) => Promise<void>;
@@ -240,6 +243,28 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
          * notification on the outcome that most needs reading.
          */
         urgency: final.status === ARCHIVE_STATUS.complete ? 'low' : 'normal',
+        /*
+         * The moment we know the download cannot work is the moment to offer
+         * the thing that does, rather than leaving it to be discovered by
+         * opening an application that does nothing.
+         */
+        actions:
+          final.status === ARCHIVE_STATUS.onlineRequired
+            ? [
+                {
+                  id: 'live',
+                  label: 'Use it as an app instead',
+                  onClick: () => {
+                    void useSitesStore
+                      .getState()
+                      .convertToLive(final.id)
+                      .then((live) => {
+                        if (live) openApp(siteAppId(live.id));
+                      });
+                  },
+                },
+              ]
+            : undefined,
       });
       return final;
     } catch (error) {
@@ -320,6 +345,25 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
       body: 'It is in the start menu. Opening it opens the real site in its own window.',
     });
     return manifest;
+  },
+
+  /**
+   * Swap a downloaded copy for the live site.
+   *
+   * For an archive that turned out to need a server: the download is of no use
+   * and keeping it alongside a working entry of the same name is worse than
+   * useless, so this replaces rather than adds. The archive is discarded,
+   * which is why the caller confirms first.
+   */
+  convertToLive: async (id) => {
+    const manifest = get().installed.find((candidate) => candidate.id === id);
+    if (!manifest || manifest.kind === 'live') return null;
+
+    const live = await get().addLive(manifest.source, { name: manifest.name });
+    if (!live) return null;
+
+    await get().uninstall(id);
+    return live;
   },
 
   /**

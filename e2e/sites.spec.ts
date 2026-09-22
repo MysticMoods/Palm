@@ -293,8 +293,10 @@ test.describe('an application that needs a server', () => {
     await win.getByRole('button', { name: 'Allow network access' }).click();
 
     // Granting network is not the same as being signed in, and saying so up
-    // front is cheaper than the confusion of finding out.
-    await expect(win.getByText(/anything needing a sign-in will still not work/)).toBeVisible();
+    // front is cheaper than the confusion of finding out. The way out stays
+    // reachable too — it used to vanish with the panel it lived on.
+    await expect(win.getByText(/searching or signing in will not work here/)).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Use it as an app instead' })).toBeVisible();
     await expect(win.locator('iframe')).toHaveCount(1);
   });
 });
