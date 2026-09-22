@@ -201,14 +201,26 @@ test.describe('origin isolation', () => {
     await palm.launch('Terminal');
     await install(palm, 'https://fixture.test/', 'Notepad');
 
-    // An application id that was never installed: the origin still must not
-    // answer with the OS. Booting a second copy of Palm OS there would put its
-    // code on an origin meant for third-party applications.
+    /*
+     * An application id that was never installed: the origin still must not
+     * answer with the OS. Booting a second copy of Palm OS there would put its
+     * code on an origin meant for third-party applications.
+     *
+     * Two things can answer, depending on how quickly the bootstrap document's
+     * worker registers and reloads — the server's bootstrap, or the worker
+     * reporting an empty origin. Both name the application and neither is Palm
+     * OS, which is the invariant.
+     */
     await page.goto('http://app-000000000000.localhost:4173/');
+    await expect
+      .poll(async () => (await page.locator('body').innerText()).includes('app-000000000000'), {
+        timeout: 15_000,
+      })
+      .toBe(true);
+
     const body = await page.locator('body').innerText();
     expect(body).not.toContain('Taskbar');
     expect(await page.locator('[role="toolbar"][aria-label="Taskbar"]').count()).toBe(0);
-    expect(body).toContain('app-000000000000');
   });
 
   test('no service worker controls the Palm OS origin', async ({ palm, page }) => {

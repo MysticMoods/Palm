@@ -198,6 +198,24 @@ async function serveRecord(record) {
   return new Response(record.data, { status: 200, headers });
 }
 
+/** The address names the application, so the page can say which one it means. */
+function appIdOfOrigin() {
+  const label = self.location.hostname.split('.')[0];
+  return /^app-[0-9a-f]{8,32}$/.test(label) ? label : self.location.hostname;
+}
+
+/** Nothing is installed on this origin. */
+function notInstalledResponse() {
+  return blockedResponse(
+    `No application is installed at this address.<br><br>` +
+      `<code>${appIdOfOrigin()}</code><br><br>` +
+      `Palm OS serves each installed application from its own origin. This one is empty — ` +
+      `either nothing was installed here, or the browser reclaimed the space. ` +
+      `Open the App Store in Palm OS to install or download it again.`,
+    404,
+  );
+}
+
 /** A readable failure page, rather than a browser error the user cannot act on. */
 function blockedResponse(message, status) {
   return new Response(
@@ -277,6 +295,15 @@ async function handle(event) {
 
   // The runtime itself is served by the server, not from the archive.
   if (url.pathname.startsWith('/_papp/')) return fetch(request);
+
+  /*
+   * No manifest at all: nothing was ever installed here, or it was cleared.
+   * Worth its own answer — "this resource is not part of the downloaded copy"
+   * is misleading when there is no downloaded copy to be part of. This is what
+   * a stray visit to an application origin gets, and what is left behind after
+   * the browser reclaims one.
+   */
+  if (!current) return notInstalledResponse();
 
   const db = await database();
   const entry = current?.entry || '/index.html';
