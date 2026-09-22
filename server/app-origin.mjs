@@ -113,14 +113,16 @@ function bootstrapDocument(appId) {
 /**
  * Connect-style middleware. Mounted ahead of the static and SPA handlers.
  */
-export function appOriginMiddleware(req, res, next) {
+export function appOriginMiddleware(req, res, next, options = {}) {
   const host = req.headers.host;
   const appId = appIdFromHost(host);
   const osOrigin = osOriginOf(req);
 
   if (!appId) {
     // The Palm OS origin. Add its own headers and carry on.
-    for (const [name, value] of Object.entries(osSecurityHeaders())) res.setHeader(name, value);
+    for (const [name, value] of Object.entries(osSecurityHeaders(options))) {
+      res.setHeader(name, value);
+    }
     return next?.();
   }
 

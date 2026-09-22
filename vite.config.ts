@@ -23,7 +23,9 @@ function palmService(): Plugin {
     name: 'palm-service',
     async configureServer(server) {
       const { mountPalmService } = await import('./server/palm-service.mjs')
-      mountPalmService(server.middlewares)
+      // Fast Refresh injects an inline script, so the OS origin's CSP is
+      // applied to preview and real builds only — where it actually matters.
+      mountPalmService(server.middlewares, { dev: true })
     },
     async configurePreviewServer(server) {
       const { mountPalmService } = await import('./server/palm-service.mjs')

@@ -66,13 +66,64 @@ export function appSecurityHeaders({ osOrigin, allowNetwork } = {}) {
   };
 }
 
-/** Headers for the Palm OS origin itself. */
-export function osSecurityHeaders() {
+/**
+ * The Palm OS origin's own policy.
+ *
+ * Palm OS is first-party code and uses no `eval`, `new Function` or
+ * `dangerouslySetInnerHTML` — so `script-src 'self'` costs nothing and is the
+ * directive doing the real work here. It means no inline script, no remote
+ * script and no eval can run on the origin that holds the user's files, even
+ * if something later introduces an injection bug.
+ *
+ * The permissive directives are permissive because the Browser application
+ * legitimately needs them: it embeds arbitrary sites in a frame and fetches
+ * arbitrary URLs to download them. Tightening those would break the feature
+ * rather than protect anything — the frame is separately sandboxed, and the
+ * fetch is subject to CORS.
+ */
+export function osContentSecurityPolicy() {
+  // Both schemes: an installed deployment is https, and dev and preview are
+  // http on localhost.
+  const web = 'https: http:';
+
+  return [
+    `default-src 'self'`,
+    // The one that matters.
+    `script-src 'self'`,
+    // React writes inline `style` attributes in ~70 places; `style-src-attr`
+    // is not honoured widely enough to rely on instead.
+    `style-src 'self' 'unsafe-inline'`,
+    `img-src 'self' data: blob: ${web}`,
+    `font-src 'self' data:`,
+    `media-src 'self' data: blob: ${web}`,
+    // The Browser downloads pages; installed applications are fetched through
+    // the archiver on this origin.
+    `connect-src 'self' ${web}`,
+    `worker-src 'self' blob:`,
+    // The Browser embeds remote sites, and the OS frames application origins.
+    `frame-src 'self' data: blob: ${web}`,
+    `object-src 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self'`,
+    // Nothing may frame Palm OS itself.
+    `frame-ancestors 'none'`,
+  ].join('; ');
+}
+
+/**
+ * Headers for the Palm OS origin itself.
+ *
+ * @param options.dev  true for the Vite dev server, which injects an inline
+ *   module preamble for React Fast Refresh. `script-src 'self'` would block
+ *   it, so the policy is applied to preview and production builds only —
+ *   exactly where it is the code users actually run.
+ */
+export function osSecurityHeaders({ dev = false } = {}) {
   return {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
-    // Palm OS frames application origins, so it cannot isolate itself from
-    // them entirely — but nothing may frame Palm OS.
+    // Kept alongside `frame-ancestors` for browsers that honour only this.
     'X-Frame-Options': 'DENY',
+    ...(dev ? {} : { 'Content-Security-Policy': osContentSecurityPolicy() }),
   };
 }
