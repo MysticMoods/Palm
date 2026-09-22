@@ -13,10 +13,11 @@ about two seconds, with `fake-indexeddb` standing in for browser storage and
 jsdom only where a DOM is genuinely needed.
 
 **End-to-end tests** (`npm run test:e2e`) drive the *production build* in
-headless Firefox — 74 tests across boot, every application launching, window
+headless Firefox — 77 tests across boot, every application launching, window
 geometry and the switcher, the shell, the Files app, persistence across reload,
 the first-run tour, Palm Disk, installing web applications, browsing modes,
-migration from the previous architecture, and origin isolation. They run against the real bundle on purpose:
+migration from the previous architecture, origin isolation and the origin's
+content security policy. They run against the real bundle on purpose:
 the bugs worth catching at this level — stacking contexts, animation fill
 modes, lazy chunk loading — only appear there.
 
@@ -27,9 +28,18 @@ npx playwright install firefox   # once
 npm run test:e2e       # builds, serves and drives the bundle itself
 ```
 
-Firefox is the end-to-end target because it is the strictest of the three
-engines about the platform features Palm OS leans on, and because the
-capability fallbacks — no File System Access API — only exercise there.
+Firefox is the suite of record: it is the strictest of the three engines about
+the platform features Palm OS leans on, and the capability fallbacks — no File
+System Access API — only exercise there.
+
+A Chromium project exists in the Playwright config and **has never been run**.
+This development environment cannot reach Playwright's browser CDN, so the
+engine could not be downloaded. CI runs it as a separate job marked
+`continue-on-error`, so its results are visible without an unverified engine
+gating the build; it should be promoted into the blocking job once green.
+Chromium matters because it is what most people use, and because it is the only
+engine with a real File System Access API — Palm Disk's code path has still
+never run against the genuine thing.
 
 CI runs type-check, lint, unit tests and build in one job, and the end-to-end
 suite in another.
@@ -260,6 +270,24 @@ storage eviction, and a production wildcard-DNS deployment with real
 certificates — `*.localhost` exercises the same browser behaviour (distinct
 origin, secure context, per-origin service worker) but not the DNS and TLS
 setup described in DEPLOYMENT.md.
+
+### The Palm OS origin's policy
+`e2e/policy.spec.ts` asserts the Content-Security-Policy is actually sent and
+carries the directives that matter — `script-src 'self'`, no `unsafe-eval`,
+`object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'` — and then
+checks the harder half: that it does not break anything.
+
+A CSP violation logs to the console and fails nothing, so a policy that
+silently blocks a lazy chunk or an object URL looks exactly like one that
+works. The test collects `securitypolicyviolation` events from the page before
+any application code runs, opens five applications chosen for the things CSPs
+usually break — lazy chunks, inline style attributes, object URLs, a
+worker-backed view — and asserts the list is empty. A third test does the same
+while the Browser embeds a site, since `frame-src` has to stay open enough for
+the one thing that application exists to do.
+
+Not applied by the dev server, which injects an inline script for Fast Refresh;
+the tests run against the production build, where it is applied.
 
 ### Crash isolation
 A deliberately throwing application was registered, built and launched. It
