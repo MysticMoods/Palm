@@ -1,162 +1,112 @@
 # Palm OS
 
-A desktop environment that runs in the browser. It has a window manager, a
-virtual filesystem, a shell, twelve applications and a settings system.
-Everything you create is stored locally in IndexedDB and survives a reload —
-there is no account, no server-side state and no telemetry.
+Palm OS is a desktop environment that runs entirely in the browser. It includes a window manager, a virtual filesystem, a shell, twelve built-in apps, and a settings system. Everything you do is stored locally in IndexedDB and persists across reloads — there are no accounts, no telemetry, and no remote database.
 
-A small Node service sits alongside it for two jobs the browser cannot do
-itself: fetching pages for the offline archiver, and serving each installed web
-application from its own origin. The desktop and everything in it is
-client-side.
+The desktop itself is static client-side React. Alongside it runs a small Node companion service for two tasks the browser cannot handle on its own: proxying remote pages for the offline archiver, and routing subdomains so installed web applications run under isolated origins.
 
 ![Palm OS desktop](docs/screenshot.png)
 
-## Running it
+## Getting Started
+
+You'll need Node 20 or newer.
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # starts at http://localhost:5173
 ```
 
-Other scripts:
+When you first open it, a brief welcome setup lets you pick a username, avatar, accent color, and wallpaper (you can skip it or rerun it anytime from Settings ▸ System).
+
+Other useful scripts:
 
 ```bash
-npm run build     # type-check and produce dist/
-npm run preview   # serve the production build on :4173
-npm run serve     # serve dist/ with the standalone server
-npm run test      # unit tests (Vitest)
-npm run test:e2e  # end-to-end tests (Playwright)
-npm run lint      # oxlint
+npm run build     # type-check and build to dist/
+npm run preview   # preview production build on :4173
+npm run serve     # run dist/ with the standalone server
+npm run test      # run unit tests with Vitest
+npm run test:e2e  # run Playwright end-to-end tests (Firefox)
+npm run lint      # run oxlint
 ```
 
-Before the first `test:e2e` run, install the browser once:
-`npx playwright install firefox`.
+Before running end-to-end tests for the first time, install the Firefox browser binary:
 
-Requires Node 20 or newer. Nothing to configure: open the URL and the OS boots,
-seeding a filesystem on first launch.
+```bash
+npx playwright install firefox
+```
 
-`dev`, `preview` and `serve` all mount the same small Node service. It fetches
-URLs for the archiver, and it routes by `Host` so each installed application
-gets its own origin — `http://app-7f31c2a4b901.localhost:5173`. The desktop
-itself is entirely client-side and will run from any static host; installed
-applications are what need the service. See
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+## Features
 
-## First run
+### Window Manager and Shell
+Windows support resizing from any edge or corner, minimize, maximize, restore, snapping (halves, quarters, fullscreen with live drag previews), and per-app remembered dimensions. Stacking order and focus are tracked across windows, and each app runs inside its own error boundary so a crash in one window does not take down the desktop. The taskbar can be placed on any screen edge, alongside a start menu, notification center, quick settings tray, and system search.
 
-The first time you open it, Palm OS runs a four-step welcome: your name and
-avatar, then theme, accent colour and wallpaper. Every choice applies live —
-the background behind the card *is* the desktop wallpaper — and finishing
-dissolves the card to reveal the desktop already wearing them.
+### Built-in Applications
+Palm OS includes 12 built-in applications, each lazily loaded on demand: Files, Terminal, Text Editor, Browser, Notes, Calendar, Calculator, Image Viewer, Media Player, System Monitor, Settings, and an App Store.
 
-Skip it at any point, or run it again from Settings ▸ System.
+### Palm Disk (Local Filesystem Access)
+While the default virtual filesystem lives in IndexedDB, you can also mount a real folder from your computer using Files ▸ Palm Disk. This uses the File System Access API (Chromium browsers only).
 
-## What's in it
+Mounted folders are kept separate from the virtual filesystem to avoid confusion. You can browse, edit, save files, and create new files or directories, but Palm OS intentionally does not allow deleting, renaming, or moving anything on your actual disk.
 
-**Desktop** — wallpaper (image, gradient or solid), draggable and renamable
-icons with persisted grid positions, marquee selection, a right-click menu, a
-taskbar that can live on any edge, a start menu, system-wide search, a
-notification centre, quick settings and a tray.
+### Web Applications and Origin Isolation
+External websites can be added in two ways:
 
-**Window manager** — move, resize from any edge or corner, minimise, maximise,
-restore, snap to halves/quarters/fullscreen with a live drag preview, focus and
-z-order management, per-app remembered geometry, and crash isolation so one
-broken app cannot take the desktop down.
+1. **Download (Offline Archiving):** Archives assets from a URL (via the App Store or `fetchsite <url>` in Terminal) and installs them with a service worker. The app runs from its own subdomain origin (like `http://app-<hash>.localhost:5173`), relying on the browser's same-origin policy to isolate third-party scripts from Palm OS storage and files. Network access is disabled by default, and archives report clear status indicators (`COMPLETE`, `PARTIAL`, `ONLINE_REQUIRED`, `FAILED`) based on what assets were captured.
+2. **Add as app (Live Sites):** For sites that require authentication or block iframe embedding (such as Gmail or YouTube), Palm OS registers the site in your start menu and taskbar and opens it in a dedicated browser window, tracking when it opens and closes.
 
-**Applications** — Files, Terminal, Text Editor, Browser, Notes, Calendar,
-Calculator, Image Viewer, Media Player, System Monitor, Settings and an App
-Store. Each is lazily loaded as its own bundle.
-
-**Palm Disk** — connect a real folder from your computer and work in it inside
-the OS: browse it, open files in the Text Editor, Image Viewer and Media
-Player, edit and save them, and create new files and folders. It is kept
-deliberately distinct from the virtual filesystem, and never deletes, renames
-or moves anything on your disk. Chromium-only; see below.
-
-**Web applications** — two ways to turn a website into an application, because
-one way was never going to cover the web.
-
-*Download* archives a self-contained app from a URL (App Store ▸ Web
-applications, or `fetchsite <url>` in the Terminal) and runs it later with no
-network at all.
-
-Each one is installed onto **its own origin** — `app-7f31c2a4b901.palm.example`
-— with its own storage, its own service worker and its own permissions. That is
-what keeps somebody else's JavaScript away from your files and settings: not a
-sandbox attribute, but the browser's same-origin policy. Network access is off
-by default, and every archive carries a status (`COMPLETE`, `PARTIAL`,
-`ONLINE_REQUIRED`, `FAILED`) that names what is missing rather than implying it
-works offline when it does not.
-
-This needs a deployment that can route by Host — see
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Where that is unavailable, installing
-is disabled with an explanation rather than falling back to the OS's origin.
-
-*Add as app* downloads nothing. The site goes in your start menu and taskbar,
-and opening it opens the real site in its own browser window — its own origin,
-your own session, working normally. That is the one for YouTube, Gmail, or
-anything you sign in to: those cannot be archived (the work happens on their
-servers) and cannot be framed, and no amount of proxying changes either. Palm
-OS opens that window, notices when you close it, and can bring it back.
-
-## Keyboard
+## Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl + Space` | System search (configurable in Settings ▸ Accessibility) |
+| `Ctrl + Space` | System search |
 | `Super` | Start menu |
-| `Alt + Tab` / `Alt + Shift + Tab` | Window switcher — hold Alt, Tab to step, release to switch |
-| `Ctrl + Alt + W` | Window switcher, when your desktop grabs Alt+Tab |
-| `Alt + F4` | Close the active window |
+| `Alt + Tab` / `Alt + Shift + Tab` | Window switcher |
+| `Ctrl + Alt + W` | Window switcher (fallback when host OS intercepts Alt+Tab) |
+| `Alt + F4` | Close active window |
 | `Super + ←` / `Super + →` | Snap left / right |
-| `Super + ↑` / `Super + ↓` | Maximise / restore |
+| `Super + ↑` / `Super + ↓` | Maximize / restore |
 | `Ctrl + Alt + D` | Show desktop |
-| `Ctrl + Alt + N` | Notification centre |
+| `Ctrl + Alt + N` | Notification center |
 | `Ctrl + Alt + A` | Quick settings |
-| `Escape` | Close menus and panels |
-| `F2` · `Delete` · `Ctrl + C/X/V` · `Ctrl + A` | Rename, trash, clipboard, select all |
+| `Escape` | Close menus and active panels |
+| `F2` / `Delete` / `Ctrl + C/X/V` | File rename, trash, clipboard actions |
 
-Browser-reserved combinations (`Ctrl + T/N/W`, `F5`, `Ctrl + L`) are left alone
-on purpose — see [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+Browser-reserved shortcuts (`Ctrl + T/W/N`, `F5`, `Ctrl + L`) are intentionally left alone so normal browser behavior isn't hijacked.
 
 ## Architecture
 
 ```
 src/
 ├── core/              OS services, independent of any application
-│   ├── storage/       IndexedDB wrapper, namespaced key/value, persistence glue
+│   ├── app-manager/   Application registry, installation, and pin state
+│   ├── calendar/      Shared event store
+│   ├── clipboard/     Text and file clipboard
 │   ├── filesystem/    Virtual filesystem, paths, MIME, seed, real-disk bridge
-│   ├── window-manager/ Window state, snapping geometry
-│   ├── app-manager/    Application registry, install/pin state
-│   ├── permissions/    Per-app capability grants
-│   ├── notifications/  Notification centre and toasts
-│   ├── settings/       Preferences, theming, wallpapers, section catalogue
-│   ├── search/         Pluggable system-search providers
-│   ├── keyboard/       Global shortcut manager
-│   ├── clipboard/      Text and file clipboard
-│   ├── calendar/       Shared event store
-│   ├── sound/          Synthesised interface sounds
-│   ├── backup.ts       Export/import with validation
-│   ├── boot.ts         Startup sequence
-│   └── os.ts           The OS API applications talk to
-│
-├── desktop/           The shell: desktop, taskbar, panels, window chrome
-│   └── Welcome/       First-run setup tour
-├── apps/              One folder per application (manifest + UI)
-├── components/        Reusable UI primitives and the icon registry
+│   ├── keyboard/      Global shortcut manager
+│   ├── notifications/ Notification center and toasts
+│   ├── permissions/   Per-app capability grants
+│   ├── search/        Pluggable system search providers
+│   ├── settings/      User preferences, theming, and wallpaper catalogue
+│   ├── shell/         Core shell state
+│   ├── sites/         Web app archiving, URL rewriting, and origin bridge
+│   ├── sound/         Synthesized UI audio
+│   ├── storage/       IndexedDB wrapper and persistence
+│   ├── window-manager/ Window state, focus, and snapping geometry
+│   ├── backup.ts      Export and import with schema validation
+│   ├── boot.ts        Startup sequence and initial filesystem seed
+│   └── os.ts          OS API exposed to applications
+├── desktop/           The shell: desktop canvas, taskbar, panels, window chrome
+├── apps/              One directory per application (manifest + UI components)
+├── components/        Reusable UI primitives and icon registry
 ├── hooks/             Cross-cutting React hooks
-├── utils/             Formatting, colour, small helpers
-└── styles/            Design tokens and global CSS
+├── styles/            Design tokens and global styling
+└── utils/             Formatting, color, and helper utilities
 ```
 
-Nothing in `core/` imports from `apps/`. Applications reach the system only
-through `core/os.ts`, which is what keeps the OS core independent of what runs
-on it.
+A strict rule governs the codebase: **nothing in `src/core/` imports from `src/apps/`**. Applications interact with the system exclusively through `core/os.ts`.
 
-## Adding an application
+### Adding an Application
 
-Write a manifest and register it — that is the whole integration:
+To add a new built-in application, define an app manifest:
 
 ```ts
 // src/apps/Weather/manifest.ts
@@ -166,8 +116,8 @@ import type { AppDefinition } from '../../core/app-manager/types';
 export const weatherApp: AppDefinition = {
   id: 'weather',
   name: 'Weather',
-  description: 'Local conditions and the week ahead.',
-  icon: 'Cloud',                    // a name from components/icons.tsx
+  description: 'Local conditions and forecast.',
+  icon: 'Cloud',                    // icon name from components/icons.tsx
   color: '#38b6f0',
   category: 'Utilities',
   version: '1.0.0',
@@ -178,51 +128,37 @@ export const weatherApp: AppDefinition = {
 };
 ```
 
-Add it to the array in `src/apps/index.ts`. It now appears in the start menu,
-system search and the App Store, and can be pinned, launched and uninstalled.
+Register it in `src/apps/index.ts`, and it immediately becomes available in the start menu, search, and App Store.
 
-Inside the component, `useOS()` gives you a permission-scoped API:
+Within the app's UI component, `useOS()` exposes a permission-scoped OS handle:
 
 ```tsx
-const { os, params } = useOS();
+const { os } = useOS();
 
-await os.fs.write('/Documents/report.txt', text);   // prompts for Files access
+await os.fs.write('/Documents/report.txt', text);
 await os.notify({ title: 'Saved', body: 'report.txt' });
-await os.storage.set('lastCity', 'Lisbon');          // private to this app
+await os.storage.set('lastCity', 'Lisbon');
 os.window.setTitle('Weather — Lisbon');
 ```
 
+## Storage and Privacy
+
+All files, settings, notes, and local app state are stored directly in your browser's IndexedDB.
+
+- **Backups:** Settings ▸ System exports your entire environment (files, settings, notes, installed app state) as a single JSON file and allows restoring from one.
+- **Reset:** Settings ▸ Privacy ▸ Reset clears all local OS data.
+- **Node companion service:** When downloading web apps for offline use, URLs are fetched through the local Node service. It does not log, retain, or forward requests, and sends no user cookies or credentials.
+- **Local disk:** Palm OS cannot touch your computer's disk unless you explicitly select a directory via Palm Disk. Access is limited strictly to that chosen folder.
+
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the pieces fit together
-- [docs/SECURITY.md](docs/SECURITY.md) — the origin boundary, the permission
-  model, and what Palm OS will not do to make a website appear to work
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — wildcard DNS, certificates and
-  reverse-proxy configuration for per-application origins
-- [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — what a browser will not let a web
-  page do, and what Palm OS does instead
-- [docs/TESTING.md](docs/TESTING.md) — what was verified and how
-- [docs/HOME-SERVER.md](docs/HOME-SERVER.md) — *proposal, not built*: running
-  Palm OS on an always-on machine so one desktop follows you across devices
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System layers, state persistence, and VFS design
+- [docs/SECURITY.md](docs/SECURITY.md) — Origin boundaries, sandbox behavior, and permission handling
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Wildcard DNS, certificates, and proxy setup for per-application origins
+- [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — Web platform constraints and how Palm OS handles them
+- [docs/TESTING.md](docs/TESTING.md) — Test setup and testing conventions
+- [docs/HOME-SERVER.md](docs/HOME-SERVER.md) — Design proposal for running Palm OS on an always-on home server
 
-## Data and privacy
+## License
 
-There is no account, no server and no telemetry. Files, settings, notes and
-application data live in this browser's IndexedDB on this device. Settings ▸
-System exports the whole thing as a single JSON file and imports it back.
-Settings ▸ Privacy ▸ Reset erases it.
-
-Installing a web application is the one operation that contacts a server: the
-URL you give it is fetched by `server/`, which does not log, store or forward
-anything and sends no cookies or credentials. Everything it downloads is stored
-locally, in that application's own origin — which Palm OS itself cannot read,
-and which is therefore not part of a backup.
-
-Palm OS cannot see your real files unless you explicitly connect a folder in
-Files ▸ Palm Disk. That uses the File System Access API, so it works only in
-Chromium-based browsers, and access extends to exactly the folder you pick —
-nothing else. Eject it at any time from Settings ▸ Storage.
-
-## Licence
-
-MIT.
+MIT

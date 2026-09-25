@@ -9,6 +9,7 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 CLAUDE.md
+docs/
 
 # Playwright
 /test-results

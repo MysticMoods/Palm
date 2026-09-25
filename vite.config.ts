@@ -36,6 +36,9 @@ function palmService(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), palmService()],
+  server: {
+    allowedHosts: true,
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
