@@ -150,14 +150,6 @@ All files, settings, notes, and local app state are stored directly in your brow
 - **Node companion service:** When downloading web apps for offline use, URLs are fetched through the local Node service. It does not log, retain, or forward requests, and sends no user cookies or credentials.
 - **Local disk:** Palm OS cannot touch your computer's disk unless you explicitly select a directory via Palm Disk. Access is limited strictly to that chosen folder.
 
-## Documentation
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System layers, state persistence, and VFS design
-- [docs/SECURITY.md](docs/SECURITY.md) — Origin boundaries, sandbox behavior, and permission handling
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Wildcard DNS, certificates, and proxy setup for per-application origins
-- [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — Web platform constraints and how Palm OS handles them
-- [docs/TESTING.md](docs/TESTING.md) — Test setup and testing conventions
-- [docs/HOME-SERVER.md](docs/HOME-SERVER.md) — Design proposal for running Palm OS on an always-on home server
 
 ## License
 
