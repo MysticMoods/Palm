@@ -198,6 +198,24 @@ async function serveRecord(record) {
   return new Response(record.data, { status: 200, headers });
 }
 
+/** The address names the application, so the page can say which one it means. */
+function appIdOfOrigin() {
+  const label = self.location.hostname.split('.')[0];
+  return /^app-[0-9a-f]{8,32}$/.test(label) ? label : self.location.hostname;
+}
+
+/** Nothing is installed on this origin. */
+function notInstalledResponse() {
+  return blockedResponse(
+    `No application is installed at this address.<br><br>` +
+      `<code>${appIdOfOrigin()}</code><br><br>` +
+      `Palm OS serves each installed application from its own origin. This one is empty — ` +
+      `either nothing was installed here, or the browser reclaimed the space. ` +
+      `Open the App Store in Palm OS to install or download it again.`,
+    404,
+  );
+}
+
 /** A readable failure page, rather than a browser error the user cannot act on. */
 function blockedResponse(message, status) {
   return new Response(
@@ -220,14 +238,45 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(handle(event));
 });
 
+/**
+ * Anything that is not a GET.
+ *
+ * A POST is by definition asking a server to do something, and an archive is
+ * not a server. The reply is JSON with a failing status, because these are
+ * almost always API calls: an application that is handed an HTML page with a
+ * 200 cannot even tell that it failed.
+ *
+ * Cross-origin writes are let through when network access is granted — those
+ * are the application talking to somebody else, under ordinary CORS rules.
+ * Same-origin writes are the application talking to *its own* server, which is
+ * now us, and we do not have what it is asking for. Palm OS archives; it does
+ * not proxy writes, and pretending otherwise would mean relaying arbitrary
+ * request bodies to arbitrary hosts.
+ */
 async function handleNonGet(request) {
   const current = await manifest();
-  if (current?.permissions?.includes('NETWORK')) return fetch(request);
-  recordMiss(request.url, 'network-blocked');
-  return new Response('This application is installed offline, so it cannot send data to a server.', {
-    status: 503,
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-  });
+  const allowed = Boolean(current?.permissions?.includes('NETWORK'));
+  const sameOrigin = new URL(request.url).origin === self.location.origin;
+
+  if (allowed && !sameOrigin) return fetch(request);
+
+  const reason = allowed ? 'cannot-forward-write' : 'network-blocked';
+  recordMiss(request.url, reason);
+
+  return new Response(
+    JSON.stringify({
+      error: 'palm-os-archive',
+      reason,
+      message: allowed
+        ? 'Palm OS holds a downloaded copy of this application, not the server it talks to. ' +
+          'Requests that send data cannot be answered.'
+        : 'This application has no network permission, so it cannot send data to a server.',
+    }),
+    {
+      status: allowed ? 501 : 503,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    },
+  );
 }
 
 async function handle(event) {
@@ -246,6 +295,15 @@ async function handle(event) {
 
   // The runtime itself is served by the server, not from the archive.
   if (url.pathname.startsWith('/_papp/')) return fetch(request);
+
+  /*
+   * No manifest at all: nothing was ever installed here, or it was cleared.
+   * Worth its own answer — "this resource is not part of the downloaded copy"
+   * is misleading when there is no downloaded copy to be part of. This is what
+   * a stray visit to an application origin gets, and what is left behind after
+   * the browser reclaims one.
+   */
+  if (!current) return notInstalledResponse();
 
   const db = await database();
   const entry = current?.entry || '/index.html';
@@ -366,7 +424,22 @@ async function handleMessage(data, port, source) {
 
   try {
     if (data.type === 'palm.sw.ping') {
-      return reply({ ok: true, installed: Boolean(await manifest()) });
+      /*
+       * Answered from storage, not from the cached manifest.
+       *
+       * The manifest is held in memory for speed, so a worker that is still
+       * alive when its storage is cleared — which is what eviction looks like
+       * — would go on reporting itself installed while 404ing every request.
+       * Checking that the entry document is actually readable makes
+       * "installed" mean the only thing worth reporting: that this
+       * application can still be served.
+       */
+      const current = await manifest();
+      const entry = current?.entry
+        ? await getFile(await database(), current.entry).catch(() => null)
+        : null;
+      if (current && !entry) manifestCache = null;
+      return reply({ ok: true, installed: Boolean(current && entry) });
     }
 
     if (PRIVILEGED.has(data.type) && !fromInstaller(source)) {

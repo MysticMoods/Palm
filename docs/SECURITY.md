@@ -126,6 +126,28 @@ chain holds end to end.
 
 ---
 
+## Palm OS's own origin
+
+The OS is first-party code and uses no `eval`, `new Function` or
+`dangerouslySetInnerHTML` — so `script-src 'self'` costs nothing and is applied.
+It is defence in depth: were an injection bug ever introduced, it could not run
+inline script, remote script or `eval` on the origin that holds the user's
+files. `object-src 'none'`, `base-uri 'self'` and `frame-ancestors 'none'` come
+with it.
+
+The rest of the policy is open to the web on purpose. The Browser embeds
+arbitrary sites and downloads arbitrary URLs, so `frame-src`, `img-src`,
+`connect-src` and `media-src` have to allow them; the embedded frame is
+separately sandboxed and the fetch is subject to CORS. A policy that broke the
+Browser would be theatre.
+
+The dev server is exempt — Fast Refresh injects an inline script — so the
+policy covers preview, `npm run serve` and real deployments.
+`e2e/policy.spec.ts` asserts both halves: that the header is sent with the
+directives that matter, and that exercising the desktop and the Browser
+produces no `securitypolicyviolation` events. A CSP nobody checks is a CSP that
+quietly breaks something.
+
 ## The fetch service
 
 A server that fetches arbitrary URLs on request is an SSRF primitive unless it
@@ -164,12 +186,6 @@ confusing way. Those addresses are sent to the real browser.
 
 ## Known weaknesses
 
-**Palm OS's own origin has no CSP.** The OS is first-party code and does not
-use `eval`, `new Function` or `dangerouslySetInnerHTML`, but a policy would be
-defence in depth against a future mistake. It is not applied yet because a CSP
-that breaks the OS is worse than one that is missing, and getting it right
-needs its own pass.
-
 **An application can spend the device's resources.** Origin isolation stops it
 reading anything; it does not stop it allocating memory or burning CPU. It runs
 in the same process tree as the desktop, so a busy loop is noticeable. The
@@ -185,6 +201,9 @@ through the SSRF-guarded fetch service, with no cookies — but it does run, and
 the install dialog says so before anything is downloaded. It can be turned off,
 at the cost of an incomplete archive.
 
-**Installed applications are not included in backups.** A backup is written by
-Palm OS, which cannot read another origin's storage. The manifests could be
-exported so a restore could offer to reinstall; the bytes could not.
+**A backup carries an application's manifest, never its files.** A backup is
+written by Palm OS, which cannot read another origin's storage — the same
+property that keeps an application out of your data. So a restore brings back
+what was installed and the address it came from, and Palm OS offers to download
+it again; it cannot bring back the bytes, or anything the application stored
+for itself.

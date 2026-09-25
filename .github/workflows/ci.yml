@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Type-check, lint and unit-test before building, so a failure points at
+      # the cause rather than at a bundling error downstream of it.
+      - name: Type check
+        run: npx tsc -b
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Firefox is the suite of record: the strictest of the three about the
+      # platform features Palm OS leans on, and the only one where the
+      # capability fallbacks (no File System Access API) exercise.
+      - name: Install browser
+        run: npx playwright install --with-deps firefox
+
+      # The Playwright config builds and serves the production bundle itself.
+      - name: End-to-end tests
+        run: npm run test:e2e -- --project=firefox
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  # Chromium is the engine most people use, and the only one with a real File
+  # System Access API. Kept as its own job rather than merged into the one
+  # above so a failure names the engine immediately, and so the two run in
+  # parallel — the browser download dominates either way.
+  e2e-chromium:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: npm run test:e2e -- --project=chromium
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-chromium
+          path: playwright-report/
+          retention-days: 7

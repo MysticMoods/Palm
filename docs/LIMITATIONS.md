@@ -181,6 +181,15 @@ site data in browser settings erases Palm OS.
 `navigator.storage.persist()` to request eviction protection (browsers grant
 this at their discretion), and provides a full JSON export.
 
+Recovery is the part that has to work regardless, so it is tested rather than
+assumed. If the OS database is gone at boot, Palm OS re-seeds a filesystem and
+comes up normally instead of failing — losing the files, which is what eviction
+means, but not the desktop. If an *application's* origin is cleared, Palm OS
+notices its files are missing, says so in the App Store, and offers to download
+it again from the address in its manifest, keeping the same origin so anything
+the application stored for itself survives. `e2e/resilience.spec.ts` evicts
+both and asserts each recovers.
+
 ## Installed applications run third-party code — on their own origin
 
 Palm OS can archive a self-contained web application and run it later with no
@@ -230,11 +239,62 @@ calls its own API is marked `ONLINE_REQUIRED`: the front end archived fine, and
 it still needs a server. That is a different thing to tell the user than
 "some files are missing", so it is a different status.
 
-## Installed applications are not included in backups
+YouTube is the worked example. Archiving `www.youtube.com` succeeds — 99 files,
+54 MB — and is correctly marked `ONLINE_REQUIRED`, with `/api/stats/qoe` among
+the backend calls found in its code. Nothing is wrong with the archive. What
+cannot be downloaded is YouTube: the video streams come from another host under
+short-lived signed URLs, search and recommendations are API calls, and anything
+personal needs a session. The same is true of Gmail, Google Docs, a social feed
+or any site you sign in to.
+
+Allowing network access does not rescue them. It lets an application *read*
+from the web; it does not make Palm OS a write proxy. A `POST` to the
+application's own origin is the application asking its own server for
+something, and an archive does not have it — so it is refused with JSON and a
+failing status, rather than the HTML page and a `200` that would leave the
+application unable to tell it had failed at all. Relaying arbitrary request
+bodies to arbitrary hosts would be a different product, with a different abuse
+surface.
+
+**What Palm OS does instead:** it offers the other way of running a website —
+as a **live application**. Nothing is downloaded. The site goes in the start
+menu, the taskbar and search like any other application, and opening it opens
+the real site in its own top-level browser window, on its own origin, with your
+own session. There it simply works: signed in, video playing, downloads and all.
+
+Palm OS manages that window without being able to see into it — it opens it,
+notices when you close it, brings it back and can close it for you. That is the
+whole of what a browser permits an embedded page to do with another origin, and
+it is enough to make a website behave like an installed application.
+
+The honest shape of the trade: full functionality, in a window that is not
+painted inside the desktop. It cannot be painted inside the desktop — a site
+that refuses framing cannot be drawn there at all, and a framed site is a
+third-party context, so it would not have your sign-in even if it agreed.
+
+Opening an *archived* application that turns out to need a server also shows
+what is wrong instead of a page that loads and then fails at every request — which is what you get
+otherwise, since network access is off by default. It names the server the
+application wants, and offers three things: open the real site, allow network
+access, or show it anyway. Allowing network lets it reach that server through
+Palm OS, but without cookies, so a sign-in still will not work — and it says so
+rather than letting that be the next surprise.
+
+## A backup holds an application's manifest, not its files
 
 A backup is written by Palm OS, which cannot read another origin's storage —
-the same property that keeps applications out of the OS's data. Settings,
-files and OS application data export and import as before.
+the same property that keeps applications out of the OS's data.
+
+**What Palm OS does instead:** the manifest travels, including the address the
+application was archived from. Restoring a backup brings the application list
+back, marks each one as needing its files, and offers to download it again in
+one click. What cannot come back is whatever the application stored for itself
+— your drawings inside an archived drawing tool live on its origin, not in the
+OS. An application granted `FILES` can save through the bridge into the Palm OS
+filesystem, and that *is* backed up.
+
+The same machinery covers eviction: a browser reclaiming space from an
+application origin produces exactly the same state, and the same repair.
 
 ## The fetch service is a server, and it is the one server here
 

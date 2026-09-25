@@ -113,14 +113,16 @@ function bootstrapDocument(appId) {
 /**
  * Connect-style middleware. Mounted ahead of the static and SPA handlers.
  */
-export function appOriginMiddleware(req, res, next) {
+export function appOriginMiddleware(req, res, next, options = {}) {
   const host = req.headers.host;
   const appId = appIdFromHost(host);
   const osOrigin = osOriginOf(req);
 
   if (!appId) {
     // The Palm OS origin. Add its own headers and carry on.
-    for (const [name, value] of Object.entries(osSecurityHeaders())) res.setHeader(name, value);
+    for (const [name, value] of Object.entries(osSecurityHeaders(options))) {
+      res.setHeader(name, value);
+    }
     return next?.();
   }
 
@@ -146,6 +148,27 @@ export function appOriginMiddleware(req, res, next) {
     if (pathname === '/_papp/origins.mjs') return serveSharedModule(res, 'origins.mjs');
     // Everything else under /_papp/ is a static file of the application runtime.
     return next?.();
+  }
+
+  /*
+   * Only a navigation gets the bootstrap document. A write reaching the server
+   * means the application asked its own server for something and the service
+   * worker was not there to say no — answering with an HTML page and a 200
+   * would tell it the request succeeded.
+   */
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.statusCode = 405;
+    res.setHeader('Allow', 'GET, HEAD');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(
+      JSON.stringify({
+        error: 'palm-os-archive',
+        message:
+          'This is a downloaded copy of an application, not the server it talks to. ' +
+          'Requests that send data cannot be answered.',
+      }),
+    );
+    return;
   }
 
   res.statusCode = 200;

@@ -4,12 +4,12 @@ import { Button } from '../../components/ui/Button';
 import { TextField } from '../../components/ui/Field';
 import { Badge, EmptyState, Notice } from '../../components/ui/Feedback';
 import { ConfirmDialog, Modal } from '../../components/ui/Modal';
-import { statusLabel, statusSummary } from '../../core/sites/manifest';
+import { describeApp } from '../../core/sites/manifest';
 import { appOrigin, isolationStatus } from '../../core/sites/origin';
 import type { IsolationStatus } from '../../core/sites/origin';
 import { siteAppId, useSitesStore } from '../../core/sites/store';
-import { APP_PERMISSION_INFO, ARCHIVE_STATUS } from '../../core/sites/types';
-import type { AppManifest, ArchiveStatus } from '../../core/sites/types';
+import { APP_PERMISSION_INFO } from '../../core/sites/types';
+import type { AppManifest } from '../../core/sites/types';
 import { useNetwork } from '../../hooks/useSystem';
 import { cn } from '../../utils/cn';
 import { formatBytes, formatRelative } from '../../utils/format';
@@ -21,14 +21,6 @@ const SUGGESTIONS = [
   { name: 'Excalidraw', url: 'https://excalidraw.com', note: 'Drawing, entirely client-side' },
   { name: 'TinyPNG', url: 'https://tinypng.com', note: 'Needs a server — a good counter-example' },
 ];
-
-/** Badge tone per archive status, so the list can be scanned at a glance. */
-const STATUS_TONE: Record<ArchiveStatus, 'ok' | 'warn' | 'danger' | 'neutral'> = {
-  [ARCHIVE_STATUS.complete]: 'ok',
-  [ARCHIVE_STATUS.partial]: 'warn',
-  [ARCHIVE_STATUS.onlineRequired]: 'neutral',
-  [ARCHIVE_STATUS.failed]: 'danger',
-};
 
 export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
   const [url, setUrl] = useState('');
@@ -43,6 +35,9 @@ export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
   const install = useSitesStore((s) => s.install);
   const uninstall = useSitesStore((s) => s.uninstall);
   const setPermissions = useSitesStore((s) => s.setPermissions);
+  const reinstall = useSitesStore((s) => s.reinstall);
+  const addLive = useSitesStore((s) => s.addLive);
+  const missingArchives = useSitesStore((s) => s.missingArchives);
   const network = useNetwork();
 
   useEffect(() => {
@@ -80,8 +75,15 @@ export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
     <div className="flex flex-col gap-4">
       <Notice tone="neutral" icon="Package" title="Install a web application to use it offline">
         Palm OS downloads the page and everything it needs to run, then installs it on an origin of
-        its own. This suits things that do their work in the browser — an editor, a drawing tool, a
-        formatter. It cannot help a site that asks a server to do the work.
+        its own. This suits things that do their work <strong>in the browser</strong> — an editor, a
+        drawing tool, a calculator, a formatter.
+        <br />
+        <br />
+        It cannot help a site whose work happens on a server. YouTube, Gmail, Google Docs, a social
+        feed, anything you sign in to: the page is only the front of it, and the part that matters
+        stays on their machines. Those install and then do nothing useful, so Palm OS checks and
+        labels them <strong>Online required</strong> rather than letting you find out by opening a
+        blank window.
       </Notice>
 
       <IsolationNotice isolation={isolation} />
@@ -117,9 +119,30 @@ export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
             disabled={!canInstall || !url.trim() || !network.online}
             onClick={begin}
           >
-            Install
+            Download
+          </Button>
+          <Button
+            variant="secondary"
+            icon="ExternalLink"
+            disabled={!url.trim()}
+            onClick={() => {
+              const target = url.trim();
+              setUrl('');
+              setName('');
+              void addLive(target, { name: name.trim() || undefined });
+            }}
+          >
+            Add as app
           </Button>
         </div>
+
+        <p className="mt-2 text-[11.5px] leading-relaxed text-ink-3">
+          <strong className="text-ink-2">Download</strong> keeps a copy that works offline — for
+          things that do their work in the browser.{' '}
+          <strong className="text-ink-2">Add as app</strong> downloads nothing: it puts the site in
+          your start menu and opens the real thing in its own window, signed in and working. That is
+          the one that suits YouTube, Gmail or anything you have an account with.
+        </p>
 
         <label className="mt-2.5 flex cursor-pointer items-start gap-2 text-[11.5px] text-ink-2">
           <input
@@ -188,7 +211,9 @@ export function WebApps({ onOpen }: { onOpen: (appId: string) => void }) {
               <InstalledRow
                 key={manifest.id}
                 manifest={manifest}
+                filesMissing={missingArchives.includes(manifest.id)}
                 onOpen={() => onOpen(siteAppId(manifest.id))}
+                onReinstall={() => void reinstall(manifest.id)}
                 onRemove={() => setConfirmRemove(manifest)}
                 onToggleNetwork={(enabled) =>
                   void setPermissions(
@@ -293,18 +318,24 @@ function IsolationNotice({ isolation }: { isolation: IsolationStatus | null }) {
 
 function InstalledRow({
   manifest,
+  filesMissing,
   onOpen,
+  onReinstall,
   onRemove,
   onToggleNetwork,
 }: {
   manifest: AppManifest;
+  filesMissing: boolean;
   onOpen: () => void;
+  onReinstall: () => void;
   onRemove: () => void;
   onToggleNetwork: (enabled: boolean) => void;
 }) {
   const [showDetails, setShowDetails] = useState(false);
   const online = manifest.permissions.includes('NETWORK');
+  const live = manifest.kind === 'live';
   const origin = appOrigin(manifest.id);
+  const described = describeApp(manifest);
 
   return (
     <li className="rounded-xl border border-edge/10 bg-surface-2/40 p-3">
@@ -318,31 +349,54 @@ function InstalledRow({
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-[13px] font-medium text-ink">
             {manifest.name}
-            <Badge tone={STATUS_TONE[manifest.status]}>{statusLabel(manifest.status)}</Badge>
-            <Badge tone={online ? 'warn' : 'ok'}>{online ? 'Online' : 'Offline'}</Badge>
-            <Badge tone="neutral">Isolated</Badge>
+            {live ? (
+              <Badge tone="accent">Live</Badge>
+            ) : filesMissing ? (
+              <Badge tone="danger">Files missing</Badge>
+            ) : (
+              <>
+                <Badge tone={described.tone}>{described.label}</Badge>
+                <Badge tone={online ? 'warn' : 'ok'}>{online ? 'Online' : 'Offline'}</Badge>
+                <Badge tone="neutral">Isolated</Badge>
+              </>
+            )}
           </p>
           <p className="truncate text-[11px] text-ink-3">
-            {manifest.primaryHost} · {manifest.fileCount} files · {formatBytes(manifest.bytes)} ·
-            installed {formatRelative(manifest.createdAt)}
+            {manifest.primaryHost} ·{' '}
+            {live
+              ? 'nothing downloaded'
+              : `${manifest.fileCount} files · ${formatBytes(manifest.bytes)}`}{' '}
+            · added {formatRelative(manifest.createdAt)}
           </p>
         </div>
         <div className="flex shrink-0 gap-1.5">
-          <Button size="sm" variant="primary" icon="Play" onClick={onOpen}>
-            Open
-          </Button>
-          <Button size="sm" variant="ghost" icon="Info" onClick={() => setShowDetails(!showDetails)}>
-            Details
-          </Button>
+          {filesMissing && !live ? (
+            <Button size="sm" variant="primary" icon="Download" onClick={onReinstall}>
+              Download again
+            </Button>
+          ) : (
+            <Button size="sm" variant="primary" icon="Play" onClick={onOpen}>
+              Open
+            </Button>
+          )}
+          {live ? null : (
+            <Button size="sm" variant="ghost" icon="Info" onClick={() => setShowDetails(!showDetails)}>
+              Details
+            </Button>
+          )}
           <Button size="sm" variant="ghost" className="text-danger" onClick={onRemove}>
             Remove
           </Button>
         </div>
       </div>
 
-      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-2">{statusSummary(manifest)}</p>
+      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-2">
+        {filesMissing && !live
+          ? `The files for this application are no longer on its origin — either this is a restored backup, or the browser reclaimed the space. Palm OS still knows what it was, and can download it again from ${manifest.primaryHost}.`
+          : described.summary}
+      </p>
 
-      {showDetails ? (
+      {showDetails && !live ? (
         <div className="mt-2.5 flex flex-col gap-2 rounded-lg bg-surface-3/40 p-2.5 text-[11px] text-ink-3">
           <p>
             <span className="text-ink-2">Runs on</span>{' '}

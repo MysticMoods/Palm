@@ -170,12 +170,22 @@ one shared definition (`shared/app-policy.mjs`) so the two cannot drift.
 | | Palm OS origin | Application origins |
 |---|---|---|
 | `X-Frame-Options` | `DENY` | — (uses `frame-ancestors`) |
-| `Content-Security-Policy` | — | full policy, `frame-ancestors <OS origin>` |
+| `Content-Security-Policy` | `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'` | full policy, `frame-ancestors <OS origin>` |
 | `X-Content-Type-Options` | `nosniff` | `nosniff` |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | `no-referrer` |
 | `Permissions-Policy` | — | camera, microphone, geolocation, payment, USB, serial, MIDI, XR all `()` |
 
-No CSP is applied to the Palm OS origin itself. Adding one is worthwhile and is
-noted in [LIMITATIONS.md](LIMITATIONS.md); it is a separate change from this
-one, and applying a policy that breaks the OS would be worse than not having it
-yet.
+The Palm OS origin's policy is deliberately strict where it is free and
+permissive where the product needs it. `script-src 'self'` is the load-bearing
+one: the OS uses no `eval`, no inline script and no remote script, so nothing
+is given up, and an injection bug could not reach the origin holding the user's
+files. `frame-src`, `img-src` and `connect-src` stay open to the web because
+the Browser application embeds arbitrary sites and downloads arbitrary URLs —
+tightening those would break the feature rather than protect anything.
+
+It is **not** applied by the Vite dev server, which injects an inline script
+for Fast Refresh. It applies to `npm run preview`, `npm run serve` and any real
+deployment — which is the code users actually run. `e2e/policy.spec.ts` asserts
+the header is present and that a normal session produces no
+`securitypolicyviolation` events, so a policy that silently blocks something
+fails the build rather than degrading quietly.

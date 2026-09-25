@@ -20,24 +20,31 @@ import { create } from 'zustand';
 import { lazy } from 'react';
 import { appSecurityHeaders } from '../../../shared/app-policy.mjs';
 import { registerApp, unregisterApp } from '../app-manager/registry';
+import { openApp } from '../os';
 import { useAppStore } from '../app-manager/store';
 import { notifications } from '../notifications/store';
 import { archiveSite } from './archive';
 import { AppOriginChannel, withAppOrigin } from './installer';
 import { applyValidation, sanitisePermissions, statusSummary } from './manifest';
 import { migrateLegacyApps, hasLegacyApps } from './migrate';
-import { appOrigin, isolationStatus, osOrigin } from './origin';
+import { closeManaged } from './live';
+import { appOrigin, isolationStatus, newAppId, osOrigin } from './origin';
 import { installedApps } from './storage';
 import {
   APP_PERMISSIONS,
   ARCHIVE_STATUS,
+  ARCHIVE_VERSION,
   DEFAULT_APP_PERMISSIONS,
+  EMPTY_DIAGNOSTICS,
   ArchiveError,
 } from './types';
 import type { AppManifest, AppPermission, ArchiveFile, ArchiveProgress } from './types';
 
 /** Every installed application shares one viewer component, keyed by id. */
 const AppViewer = lazy(() => import('../../apps/SiteViewer/SiteViewerApp'));
+
+/** Live applications run in a real browser window; this is their controller. */
+const LiveViewer = lazy(() => import('../../apps/SiteViewer/LiveAppApp'));
 
 /** App ids are namespaced so an archive cannot shadow a built-in application. */
 export const siteAppId = (id: string) => `site:${id}`;
@@ -53,16 +60,35 @@ interface SitesState {
   ready: boolean;
   /** Set when applications from the pre-isolation architecture were moved. */
   migrated: number;
+  /**
+   * Applications whose manifest Palm OS holds but whose files are gone from
+   * their own origin — a restored backup, or storage the browser reclaimed.
+   */
+  missingArchives: string[];
 
   load: () => Promise<void>;
   install: (url: string, options?: InstallOptions) => Promise<AppManifest | null>;
+  /** Add a site that runs live, in its own window, without downloading it. */
+  addLive: (url: string, options?: { name?: string }) => Promise<AppManifest | null>;
+  /** Replace a downloaded copy that cannot work with a live application. */
+  convertToLive: (id: string) => Promise<AppManifest | null>;
+  reinstall: (id: string) => Promise<AppManifest | null>;
   uninstall: (id: string) => Promise<void>;
   setPermissions: (id: string, permissions: AppPermission[]) => Promise<void>;
   revalidate: (id: string) => Promise<AppManifest | null>;
+  verifyArchives: () => Promise<string[]>;
 }
 
 export interface InstallOptions {
   name?: string;
+  /**
+   * Reuse an existing application id instead of minting one.
+   *
+   * Re-downloading keeps the origin, so whatever the application stored for
+   * itself survives — losing someone's documents to fix a missing archive
+   * would be a strange trade.
+   */
+  appId?: string;
   /**
    * Start the application once, with network access, so the resources it loads
    * at runtime are captured too. On by default: without it, anything that
@@ -100,20 +126,27 @@ function workerManifest(manifest: AppManifest, permissions: AppPermission[]) {
 
 /** Make an installed application launchable like any other. */
 function publish(manifest: AppManifest): void {
+  const live = manifest.kind === 'live';
   registerApp({
     id: siteAppId(manifest.id),
     name: manifest.name,
-    description: `Installed from ${manifest.primaryHost}`,
+    description: live
+      ? `Opens ${manifest.primaryHost} in its own window`
+      : `Installed from ${manifest.primaryHost}`,
     icon: manifest.icon,
     color: manifest.color,
     category: 'Internet',
     version: manifest.version,
     developer: manifest.primaryHost,
     permissions: ['storage'],
-    keywords: ['offline', 'web app', 'installed', manifest.primaryHost],
-    window: { width: 1000, height: 680, minWidth: 420, minHeight: 320 },
+    keywords: live
+      ? ['web app', 'live', 'site', manifest.primaryHost]
+      : ['offline', 'web app', 'installed', manifest.primaryHost],
+    window: live
+      ? { width: 520, height: 420, minWidth: 360, minHeight: 300 }
+      : { width: 1000, height: 680, minWidth: 420, minHeight: 320 },
     props: { siteId: manifest.id },
-    component: AppViewer,
+    component: live ? LiveViewer : AppViewer,
   });
   useAppStore.getState().install(siteAppId(manifest.id));
 }
@@ -123,6 +156,7 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
   downloading: {},
   ready: false,
   migrated: 0,
+  missingArchives: [],
 
   /* ------------------------------- Loading ------------------------------ */
 
@@ -133,6 +167,14 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
 
     // Applications from before origin isolation are moved on first boot.
     if (await hasLegacyApps()) void migrateOnBoot(set, get);
+
+    /*
+     * Check the archives are actually still there — after a restored backup
+     * they will not be, and a browser under storage pressure can reclaim an
+     * application origin. Deliberately not awaited: it loads a frame per
+     * application, and the desktop should not wait on it.
+     */
+    if (installed.length > 0) void get().verifyArchives();
   },
 
   /* ------------------------------ Installing ---------------------------- */
@@ -161,6 +203,7 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
 
       const { manifest, files } = await archiveSite(normalised, {
         name: options.name,
+        appId: options.appId,
         onProgress: progress,
       });
 
@@ -180,15 +223,48 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
 
       await installedApps.save(final);
       publish(final);
-      set((state) => ({ installed: [final, ...state.installed.filter((m) => m.id !== final.id)] }));
+      set((state) => ({
+        installed: [final, ...state.installed.filter((m) => m.id !== final.id)],
+        // Whatever was missing about this one no longer is.
+        missingArchives: state.missingArchives.filter((id) => id !== final.id),
+      }));
 
       notifications.push('app-store', {
         title:
           final.status === ARCHIVE_STATUS.complete
             ? `${final.name} is installed and works offline`
-            : `${final.name} is installed`,
+            : final.status === ARCHIVE_STATUS.onlineRequired
+              ? `${final.name} is installed, but it will not work offline`
+              : `${final.name} is installed, with pieces missing`,
         body: statusSummary(final),
-        urgency: final.status === ARCHIVE_STATUS.complete ? 'normal' : 'low',
+        /*
+         * An archive that will not do what the user expected is the one worth
+         * interrupting for. Marking it low — as this did — put the quietest
+         * notification on the outcome that most needs reading.
+         */
+        urgency: final.status === ARCHIVE_STATUS.complete ? 'low' : 'normal',
+        /*
+         * The moment we know the download cannot work is the moment to offer
+         * the thing that does, rather than leaving it to be discovered by
+         * opening an application that does nothing.
+         */
+        actions:
+          final.status === ARCHIVE_STATUS.onlineRequired
+            ? [
+                {
+                  id: 'live',
+                  label: 'Use it as an app instead',
+                  onClick: () => {
+                    void useSitesStore
+                      .getState()
+                      .convertToLive(final.id)
+                      .then((live) => {
+                        if (live) openApp(siteAppId(live.id));
+                      });
+                  },
+                },
+              ]
+            : undefined,
       });
       return final;
     } catch (error) {
@@ -207,25 +283,167 @@ export const useSitesStore = create<SitesState>()((set, get) => ({
     }
   },
 
+  /* ------------------------------ Live apps ----------------------------- */
+
+  /**
+   * Add a site as an application without downloading anything.
+   *
+   * For everything that cannot be archived and cannot be framed — which is
+   * most of the web you sign in to. It becomes an entry in the start menu, the
+   * taskbar and search, and opening it opens the real site in its own window,
+   * on its own origin, with its own session. Palm OS manages that window and
+   * cannot see inside it.
+   */
+  addLive: async (url, options = {}) => {
+    const normalised = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+
+    let parsed: URL;
+    try {
+      parsed = new URL(normalised);
+    } catch {
+      notifications.push('app-store', {
+        title: 'That is not a web address',
+        body: `Could not read "${url}".`,
+        urgency: 'critical',
+      });
+      return null;
+    }
+
+    const host = parsed.host;
+    const manifest: AppManifest = {
+      id: newAppId(),
+      kind: 'live',
+      name: options.name?.trim() || host.replace(/^www\./, ''),
+      version: '1.0.0',
+      source: parsed.toString(),
+      primaryHost: host,
+      entry: '',
+      icon: 'Globe',
+      color: '#38b6f0',
+      status: ARCHIVE_STATUS.onlineRequired,
+      offline: false,
+      networkRequired: true,
+      // A live site runs on its own origin with its own everything. Palm OS
+      // grants it nothing because it has nothing to grant.
+      permissions: [],
+      resources: [],
+      missingResources: [],
+      diagnostics: { ...EMPTY_DIAGNOSTICS },
+      bytes: 0,
+      fileCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      archiveVersion: ARCHIVE_VERSION,
+    };
+
+    await installedApps.save(manifest);
+    publish(manifest);
+    set((state) => ({ installed: [manifest, ...state.installed] }));
+
+    notifications.push('app-store', {
+      title: `${manifest.name} added`,
+      body: 'It is in the start menu. Opening it opens the real site in its own window.',
+    });
+    return manifest;
+  },
+
+  /**
+   * Swap a downloaded copy for the live site.
+   *
+   * For an archive that turned out to need a server: the download is of no use
+   * and keeping it alongside a working entry of the same name is worse than
+   * useless, so this replaces rather than adds. The archive is discarded,
+   * which is why the caller confirms first.
+   */
+  convertToLive: async (id) => {
+    const manifest = get().installed.find((candidate) => candidate.id === id);
+    if (!manifest || manifest.kind === 'live') return null;
+
+    const live = await get().addLive(manifest.source, { name: manifest.name });
+    if (!live) return null;
+
+    await get().uninstall(id);
+    return live;
+  },
+
+  /**
+   * Download an application again, keeping its id and therefore its origin.
+   *
+   * Used when the files are gone but the manifest is not: a backup restored
+   * onto a fresh browser, or storage the browser reclaimed under pressure.
+   */
+  reinstall: async (id) => {
+    const manifest = get().installed.find((candidate) => candidate.id === id);
+    if (!manifest) return null;
+    return get().install(manifest.source, {
+      name: manifest.name,
+      appId: manifest.id,
+      captureRuntime: false,
+    });
+  },
+
+  /* ------------------------------ Verifying ----------------------------- */
+
+  /**
+   * Ask each application's origin whether it still has its files.
+   *
+   * Palm OS cannot read that storage, so the only way to know is to ask the
+   * service worker over there. Done one at a time: each check loads a frame on
+   * another origin, and doing several at once for no benefit would make boot
+   * feel worse than it is.
+   */
+  verifyArchives: async () => {
+    const missing: string[] = [];
+
+    for (const manifest of get().installed) {
+      // A live application has no archive; there is nothing to be missing.
+      if (manifest.kind === 'live') continue;
+      try {
+        const present = await withAppOrigin(manifest.id, async (channel) => {
+          const result = await channel.send('palm.status');
+          return result?.installed === true;
+        });
+        if (!present) missing.push(manifest.id);
+      } catch {
+        // An origin that cannot be reached at all counts as missing; the
+        // remedy offered is the same either way.
+        missing.push(manifest.id);
+      }
+    }
+
+    set({ missingArchives: missing });
+    return missing;
+  },
+
   /* ----------------------------- Uninstalling --------------------------- */
 
   uninstall: async (id) => {
-    /*
-     * The bytes are on the application's origin, so removal has to be asked
-     * for there. A failure must not strand the manifest: the entry is removed
-     * either way, and the application origin's storage is the browser's to
-     * reclaim if the frame could not be reached.
-     */
-    try {
-      await withAppOrigin(id, (channel) => channel.require('palm.uninstall'));
-    } catch (error) {
-      console.warn('[palm/sites] could not clear the application origin:', error);
+    const existing = get().installed.find((candidate) => candidate.id === id);
+
+    if (existing?.kind === 'live') {
+      // Nothing was downloaded and no origin was used; there may be a window.
+      closeManaged(id);
+    } else {
+      /*
+       * The bytes are on the application's origin, so removal has to be asked
+       * for there. A failure must not strand the manifest: the entry is removed
+       * either way, and the application origin's storage is the browser's to
+       * reclaim if the frame could not be reached.
+       */
+      try {
+        await withAppOrigin(id, (channel) => channel.require('palm.uninstall'));
+      } catch (error) {
+        console.warn('[palm/sites] could not clear the application origin:', error);
+      }
     }
 
     await installedApps.remove(id);
     useAppStore.getState().uninstall(siteAppId(id));
     unregisterApp(siteAppId(id));
-    set((state) => ({ installed: state.installed.filter((manifest) => manifest.id !== id) }));
+    set((state) => ({
+      installed: state.installed.filter((manifest) => manifest.id !== id),
+      missingArchives: state.missingArchives.filter((candidate) => candidate !== id),
+    }));
   },
 
   /* ------------------------------ Permissions --------------------------- */

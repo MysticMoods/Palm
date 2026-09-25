@@ -69,6 +69,13 @@ async function onMessage(event) {
           }),
         });
         break;
+      case 'palm.status':
+        post({
+          type: 'palm.installer.result',
+          requestId: data.requestId,
+          result: await command({ type: 'palm.sw.ping' }),
+        });
+        break;
       case 'palm.report':
         post({
           type: 'palm.installer.result',

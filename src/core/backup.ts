@@ -14,9 +14,12 @@ import type { FSContent, FSNode } from './filesystem/types';
 import { vfs } from './filesystem/vfs';
 import { kv } from './storage/kv';
 import type { KVRecord } from './storage/kv';
+import { isValidAppId } from './sites/origin';
+import { installedApps } from './sites/storage';
+import type { AppManifest } from './sites/types';
 
 export const BACKUP_FORMAT = 'palm-os-backup';
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
 interface SerialisedContent {
   id: string;
@@ -34,6 +37,17 @@ export interface Backup {
   nodes: FSNode[];
   contents: SerialisedContent[];
   kv: KVRecord[];
+  /**
+   * Installed web applications — **manifests only**.
+   *
+   * Their archived files live in each application's own origin, which Palm OS
+   * cannot read; that is the isolation boundary, not an oversight. What a
+   * manifest does carry is the address it was archived from, so a restored
+   * backup knows what was installed and can offer to download it again.
+   *
+   * Absent in version 1 backups, which is why it is optional.
+   */
+  apps?: AppManifest[];
 }
 
 /* ------------------------------ Base64 helpers ---------------------------- */
@@ -84,6 +98,7 @@ export async function createBackup(): Promise<Backup> {
     nodes,
     contents,
     kv: await kv.dump(),
+    apps: await installedApps.list(),
   };
 }
 
@@ -104,6 +119,8 @@ export interface ValidationResult {
     files: number;
     folders: number;
     settings: number;
+    /** Installed applications whose manifests can be restored. */
+    apps: number;
   };
 }
 
@@ -145,6 +162,10 @@ export function validateBackup(value: unknown): ValidationResult {
   if (!Array.isArray(value.nodes)) errors.push('The backup has no filesystem entries.');
   if (!Array.isArray(value.contents)) errors.push('The backup has no file contents.');
   if (!Array.isArray(value.kv)) errors.push('The backup has no settings.');
+  // Version 1 backups predate installed applications entirely.
+  if (value.apps !== undefined && !Array.isArray(value.apps)) {
+    errors.push('The backup\u2019s application list is malformed.');
+  }
 
   if (errors.length > 0) return { valid: false, errors };
 
@@ -195,6 +216,7 @@ export function validateBackup(value: unknown): ValidationResult {
       files: typed.filter((node) => node.kind === 'file').length,
       folders: typed.filter((node) => node.kind === 'folder').length - 1,
       settings: (value.kv as unknown[]).length,
+      apps: Array.isArray(value.apps) ? (value.apps as unknown[]).filter(validManifest).length : 0,
     },
   };
 }
@@ -209,6 +231,29 @@ export async function restoreBackup(backup: Backup): Promise<void> {
 
   await vfs.replaceAll(backup.nodes, contents);
   await kv.restore(backup.kv);
+
+  /*
+   * Application manifests come back; their files do not, because they were
+   * never in the backup to begin with. Palm OS notices the gap on the next
+   * check and offers to download each one again from the address in its
+   * manifest — see `useSitesStore.verifyArchives`.
+   */
+  for (const manifest of (backup.apps ?? []).filter(validManifest)) {
+    await installedApps.save(manifest);
+  }
+}
+
+/** A manifest is only restored if it has what re-downloading needs. */
+function validManifest(value: unknown): value is AppManifest {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    isValidAppId(value.id) &&
+    typeof value.name === 'string' &&
+    typeof value.source === 'string' &&
+    typeof value.entry === 'string' &&
+    typeof value.primaryHost === 'string'
+  );
 }
 
 export async function parseBackupFile(file: File): Promise<{ backup: Backup; validation: ValidationResult }> {

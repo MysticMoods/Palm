@@ -23,7 +23,21 @@ export default defineConfig({
     video: 'off',
   },
 
-  projects: [{ name: 'firefox', use: { ...devices['Desktop Firefox'] } }],
+  /*
+   * Firefox is the suite of record: it is the stricter of the two about the
+   * platform features Palm OS leans on, and the capability fallbacks — no File
+   * System Access API — only exercise there.
+   *
+   * Chromium is here because it is what most people actually use, and it is
+   * the only engine with a real File System Access API. Both engines are
+   * required to pass in CI. Note that Chromium cannot be run in every
+   * development environment — a sandbox without access to Playwright's browser
+   * CDN can only run Firefox locally, and relies on CI for the rest.
+   */
+  projects: [
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
 
   webServer: {
     command: 'npm run build && npm run preview -- --port 4173 --strictPort',

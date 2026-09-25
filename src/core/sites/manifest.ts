@@ -81,6 +81,36 @@ export function statusSummary(manifest: Pick<AppManifest, 'status' | 'missingRes
   }
 }
 
+/**
+ * How an application should describe itself, in one place.
+ *
+ * A live application has no archive, so none of the completeness vocabulary
+ * applies to it — and three separate bits of UI deciding that independently is
+ * how they end up disagreeing.
+ */
+export function describeApp(
+  manifest: Pick<AppManifest, 'status' | 'missingResources' | 'diagnostics' | 'kind' | 'primaryHost'>,
+): { label: string; summary: string; tone: 'ok' | 'warn' | 'danger' | 'neutral' } {
+  if (manifest.kind === 'live') {
+    return {
+      label: 'Live',
+      summary: `Opens ${manifest.primaryHost} in its own browser window, signed in and working normally. Nothing is downloaded, so it needs a connection.`,
+      tone: 'neutral',
+    };
+  }
+
+  const tone =
+    manifest.status === ARCHIVE_STATUS.complete
+      ? 'ok'
+      : manifest.status === ARCHIVE_STATUS.partial
+        ? 'warn'
+        : manifest.status === ARCHIVE_STATUS.failed
+          ? 'danger'
+          : 'neutral';
+
+  return { label: statusLabel(manifest.status), summary: statusSummary(manifest), tone };
+}
+
 /** Short badge text, for the launcher and the manager. */
 export function statusLabel(status: ArchiveStatus): string {
   switch (status) {

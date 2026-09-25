@@ -63,8 +63,12 @@ async function appFrame(page: Page, appId: string): Promise<Frame> {
 /**
  * Read something from the application, re-resolving the frame each time.
  *
- * The frame is replaced whenever the application is reloaded — which changing
- * a permission does — so a handle taken beforehand goes stale.
+ * Every read of an application frame goes through here, for two reasons. The
+ * frame is replaced whenever the application reloads — changing a permission
+ * does that — so a handle taken beforehand goes stale. And a frame caught
+ * mid-navigation has no `document.body` yet, so the read throws; polling a raw
+ * `frame.evaluate` lets that escape the poll and fail the test instead of
+ * retrying, which is an intermittent failure rather than a real one.
  */
 function pollApp<T>(page: Page, appId: string, read: () => string) {
   return expect.poll(
@@ -74,12 +78,18 @@ function pollApp<T>(page: Page, appId: string, read: () => string) {
       try {
         return (await frame.evaluate(read)) as T;
       } catch {
-        // Detached mid-reload; the next poll gets the new one.
+        // Detached mid-reload, or no body yet; the next poll gets the new one.
         return undefined as T | undefined;
       }
     },
     { timeout: 20_000 },
   );
+}
+
+/** Call into the application, once it is loaded enough to answer. */
+async function callApp(page: Page, appId: string, fn: () => void): Promise<void> {
+  await pollApp<string>(page, appId, () => document.body?.dataset.hasBridge ?? '').toBe('true');
+  await findAppFrame(page, appId)!.evaluate(fn);
 }
 
 test.describe('origin isolation', () => {
@@ -165,10 +175,8 @@ test.describe('origin isolation', () => {
     expect(alpha.id).not.toBe(beta.id);
 
     await palm.launch('StoreA');
-    const frameA = await appFrame(page, alpha.id);
-    await expect
-      .poll(() => frameA.evaluate(() => document.body.dataset.wrote), { timeout: 10_000 })
-      .toBe('yes');
+    await appFrame(page, alpha.id);
+    await pollApp<string>(page, alpha.id, () => document.body?.dataset.wrote ?? '').toBe('yes');
 
     await palm.launch('StoreB');
     const frameB = await appFrame(page, beta.id);
@@ -193,14 +201,26 @@ test.describe('origin isolation', () => {
     await palm.launch('Terminal');
     await install(palm, 'https://fixture.test/', 'Notepad');
 
-    // An application id that was never installed: the origin still must not
-    // answer with the OS. Booting a second copy of Palm OS there would put its
-    // code on an origin meant for third-party applications.
+    /*
+     * An application id that was never installed: the origin still must not
+     * answer with the OS. Booting a second copy of Palm OS there would put its
+     * code on an origin meant for third-party applications.
+     *
+     * Two things can answer, depending on how quickly the bootstrap document's
+     * worker registers and reloads — the server's bootstrap, or the worker
+     * reporting an empty origin. Both name the application and neither is Palm
+     * OS, which is the invariant.
+     */
     await page.goto('http://app-000000000000.localhost:4173/');
+    await expect
+      .poll(async () => (await page.locator('body').innerText()).includes('app-000000000000'), {
+        timeout: 15_000,
+      })
+      .toBe(true);
+
     const body = await page.locator('body').innerText();
     expect(body).not.toContain('Taskbar');
     expect(await page.locator('[role="toolbar"][aria-label="Taskbar"]').count()).toBe(0);
-    expect(body).toContain('app-000000000000');
   });
 
   test('no service worker controls the Palm OS origin', async ({ palm, page }) => {
@@ -289,36 +309,116 @@ test.describe('application policy', () => {
   });
 });
 
+test.describe('requests an archive cannot answer', () => {
+  /**
+   * A POST is asking a server to do something, and an archive is not a server.
+   *
+   * What matters is *how* it fails. These are almost always API calls, so an
+   * HTML page with a 200 — which is what the server's bootstrap document used
+   * to give them — leaves the application unable to tell it failed at all.
+   */
+  test('fails a write with JSON and a failing status, not an HTML page', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+    const frame = await appFrame(page, manifest.id);
+
+    const result = await frame.evaluate(async () => {
+      const response = await fetch('/api/save', {
+        method: 'POST',
+        body: JSON.stringify({ hello: 'world' }),
+      });
+      return {
+        status: response.status,
+        type: response.headers.get('content-type'),
+        body: await response.text(),
+      };
+    });
+
+    expect(result.status).toBe(503);
+    expect(result.type).toContain('application/json');
+    expect(result.body).not.toContain('<!doctype');
+    expect(JSON.parse(result.body)).toMatchObject({ reason: 'network-blocked' });
+  });
+
+  test('still refuses to forward a write once network is allowed', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    const manifest = await install(palm, 'https://fixture.test/', 'Notepad');
+    await palm.launch('Notepad');
+
+    await page.getByRole('button', { name: 'About this application' }).click();
+    const toggle = page
+      .locator('label', { hasText: 'Contact servers over the internet' })
+      .locator('input[type="checkbox"]')
+      .first();
+    await toggle.click();
+    await expect(toggle).toBeChecked();
+
+    /*
+     * Network permission lets the application *read* from the web. It does not
+     * make Palm OS a write proxy: relaying arbitrary request bodies to
+     * arbitrary hosts is a different product, and one with an abuse surface.
+     */
+    const body = await pollWrite(page, manifest.id);
+    expect(body.status).toBe(501);
+    expect(JSON.parse(body.text)).toMatchObject({ reason: 'cannot-forward-write' });
+  });
+});
+
+/** POST from inside the application, re-resolving the frame as it reloads. */
+async function pollWrite(page: Page, appId: string) {
+  let last: { status: number; text: string } = { status: 0, text: '' };
+  await expect
+    .poll(
+      async () => {
+        const frame = findAppFrame(page, appId);
+        if (!frame) return 0;
+        try {
+          last = await frame.evaluate(async () => {
+            const response = await fetch('/api/save', { method: 'POST', body: '{}' });
+            return { status: response.status, text: await response.text() };
+          });
+          return last.status;
+        } catch {
+          return 0;
+        }
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(501);
+  return last;
+}
+
 test.describe('the application bridge', () => {
   test('is offered to the application but grants nothing by default', async ({ palm, page }) => {
     await palm.launch('Terminal');
     const manifest = await install(palm, 'https://bridge.test/', 'Bridged');
     await palm.launch('Bridged');
-    const frame = await appFrame(page, manifest.id);
+    await appFrame(page, manifest.id);
 
-    await expect
-      .poll(() => frame.evaluate(() => document.body.dataset.hasBridge), { timeout: 10_000 })
-      .toBe('true');
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.hasBridge ?? '').toBe(
+      'true',
+    );
 
     // The request is refused because the permission was never granted, and the
     // application is told why rather than left hanging.
-    await expect
-      .poll(() => frame.evaluate(() => document.body.dataset.notify), { timeout: 10_000 })
-      .toMatch(/^refused/);
-    const message = await frame.evaluate(() => document.body.dataset.notify);
-    expect(message).toContain('Notifications');
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.notify ?? '').toMatch(
+      /^refused: "Notifications"/,
+    );
   });
 
   test('refuses a request Palm OS does not implement', async ({ palm, page }) => {
     await palm.launch('Terminal');
     const manifest = await install(palm, 'https://bridge.test/', 'Bridged');
     await palm.launch('Bridged');
-    const frame = await appFrame(page, manifest.id);
+    await appFrame(page, manifest.id);
 
-    await frame.evaluate(() => (window as unknown as { tryForbidden: () => void }).tryForbidden());
-    await expect
-      .poll(() => frame.evaluate(() => document.body.dataset.forbidden), { timeout: 10_000 })
-      .toMatch(/^refused/);
+    await callApp(page, manifest.id, () =>
+      (window as unknown as { tryForbidden: () => void }).tryForbidden(),
+    );
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.forbidden ?? '').toMatch(
+      /^refused/,
+    );
   });
 
   test('works once the permission is granted', async ({ palm, page }) => {
@@ -344,7 +444,7 @@ test.describe('the application bridge', () => {
      * `tryNotify()` on load — so the outcome recorded on the fresh document is
      * the one made under the new permission.
      */
-    await pollApp<string>(page, manifest.id, () => document.body.dataset.notify ?? '').toBe(
+    await pollApp<string>(page, manifest.id, () => document.body?.dataset.notify ?? '').toBe(
       'allowed',
     );
   });

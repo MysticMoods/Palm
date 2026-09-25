@@ -11,4 +11,6 @@ export declare function appContentSecurityPolicy(options?: AppPolicyOptions): st
 
 export declare function appSecurityHeaders(options?: AppPolicyOptions): Record<string, string>;
 
-export declare function osSecurityHeaders(): Record<string, string>;
+export declare function osContentSecurityPolicy(): string;
+
+export declare function osSecurityHeaders(options?: { dev?: boolean }): Record<string, string>;

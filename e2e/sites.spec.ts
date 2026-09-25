@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test';
 import { Palm } from './fixtures';
-import { installedManifests, routeFixture } from './site-fixture';
+import { installedManifests, routeFixture, waitForInstalls } from './site-fixture';
 
 const test = base.extend<{ palm: Palm }>({
   palm: async ({ page }, use) => {
@@ -19,7 +19,7 @@ test.describe('installing web applications', () => {
       'Installed "Notepad"',
     );
 
-    const [manifest] = await installedManifests(page);
+    const [manifest] = await waitForInstalls(page, 1);
     expect(manifest.missingResources).toEqual([]);
     expect(manifest.status).toBe('COMPLETE');
 
@@ -43,7 +43,7 @@ test.describe('installing web applications', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://fixture.test/ Notepad --no-capture');
 
-    const [manifest] = await installedManifests(page);
+    const [manifest] = await waitForInstalls(page, 1);
     // `STORAGE` is the application's own origin storage, which the browser
     // gives it whatever Palm OS thinks. Network access is off.
     expect(manifest.permissions).toEqual(['STORAGE']);
@@ -98,17 +98,18 @@ test.describe('installing web applications', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://fixture.test/ Notepad --no-capture');
 
+    await waitForInstalls(page, 1);
     const listed = await palm.runCommand('sites');
     expect(listed).toContain('fixture.test');
     expect(listed).toContain('Offline');
 
-    const [manifest] = await installedManifests(page);
+    const [manifest] = await waitForInstalls(page, 1);
     await palm.runCommand(`sites --remove ${manifest.id}`);
     await expect(page.getByRole('log', { name: 'Terminal output' })).toContainText(
       'Removed "Notepad"',
     );
 
-    expect(await installedManifests(page)).toHaveLength(0);
+    await waitForInstalls(page, 0);
   });
 
   test('reports a failure instead of installing something broken', async ({ palm, page }) => {
@@ -132,7 +133,7 @@ test.describe('the App Store', () => {
     await expect(page.getByText(/app-<id>\.localhost:4173/)).toBeVisible();
 
     await page.getByLabel('Address').fill('https://fixture.test/');
-    await page.getByRole('button', { name: 'Install' }).click();
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
 
     const dialog = page.getByRole('dialog', { name: 'Install this web application?' });
     await expect(dialog).toBeVisible();
@@ -159,7 +160,7 @@ test.describe('the App Store', () => {
     // Capture needs a network the fixture cannot provide; the store's default
     // is on, so it is turned off for this test.
     await page.getByRole('checkbox', { name: /Start it once/ }).uncheck();
-    await page.getByRole('button', { name: 'Install' }).click();
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
     await page
       .getByRole('dialog', { name: 'Install this web application?' })
       .getByRole('button', { name: 'Install' })
@@ -181,7 +182,8 @@ test.describe('archive completeness', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
 
-    const [manifest] = await installedManifests(page);
+
+    const [manifest] = await waitForInstalls(page, 1);
     expect(manifest.status).toBe('ONLINE_REQUIRED');
     expect(manifest.diagnostics.websockets).toContain('wss://live.test/stream');
     expect(manifest.diagnostics.backendHints).toContain('/api/board');
@@ -228,7 +230,7 @@ test.describe('archive completeness', () => {
     await palm.launch('Terminal');
     await palm.runCommand('fetchsite https://dynamic.test/ Dynamic --no-capture');
 
-    const before = await installedManifests(page);
+    const before = await waitForInstalls(page, 1);
     expect(before[0].status).toBe('COMPLETE');
 
     // Running it is what exposes the gap; that is what revalidation does.
@@ -249,5 +251,52 @@ test.describe('archive completeness', () => {
     expect(after[0].missingResources.some((entry) => entry.url.includes('late-chunk.json'))).toBe(
       true,
     );
+  });
+});
+
+test.describe('an application that needs a server', () => {
+  test('says so instead of showing a page that fails silently', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
+    await waitForInstalls(page, 1);
+
+    await palm.launch('Board');
+    const win = palm.window('Board');
+
+    /*
+     * The archive is present and the application would load — and then fail at
+     * every request it makes, because it needs its own server and has no
+     * network permission. Palm OS knows both, so it explains rather than
+     * letting someone watch a blank page.
+     */
+    await expect(win.getByText('Board needs a live connection')).toBeVisible();
+    await expect(win).toContainText('live.test');
+    await expect(win).toContainText('no archive can stand in for that');
+    // The diagnostics that produced the verdict are named, not just asserted.
+    await expect(win).toContainText('/api/board');
+    expect(await win.locator('iframe').count()).toBe(0);
+
+    // Three ways out, including being allowed to look anyway.
+    await expect(win.getByRole('button', { name: 'Use it as an app instead' })).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Allow network access' })).toBeVisible();
+    await win.getByRole('button', { name: 'Show it anyway' }).click();
+    await expect(win.locator('iframe')).toHaveCount(1);
+  });
+
+  test('warns that a sign-in still will not work once network is allowed', async ({ palm, page }) => {
+    await palm.launch('Terminal');
+    await palm.runCommand('fetchsite https://live.test/ Board --no-capture');
+    await waitForInstalls(page, 1);
+
+    await palm.launch('Board');
+    const win = palm.window('Board');
+    await win.getByRole('button', { name: 'Allow network access' }).click();
+
+    // Granting network is not the same as being signed in, and saying so up
+    // front is cheaper than the confusion of finding out. The way out stays
+    // reachable too — it used to vanish with the panel it lived on.
+    await expect(win.getByText(/searching or signing in will not work here/)).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Use it as an app instead' })).toBeVisible();
+    await expect(win.locator('iframe')).toHaveCount(1);
   });
 });

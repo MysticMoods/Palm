@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../components/icons';
 import { Button, IconButton } from '../../components/ui/Button';
 import { Badge, EmptyState, Notice } from '../../components/ui/Feedback';
+import { ConfirmDialog } from '../../components/ui/Modal';
 import type { AppProps } from '../../core/app-manager/types';
 import { statusLabel, statusSummary } from '../../core/sites/manifest';
 import { appOrigin } from '../../core/sites/origin';
-import { useSitesStore } from '../../core/sites/store';
+import { siteAppId, useSitesStore } from '../../core/sites/store';
 import { APP_PERMISSION_INFO, ARCHIVE_STATUS } from '../../core/sites/types';
 import type { AppManifest, AppPermission } from '../../core/sites/types';
 import { useOS } from '../../desktop/app-context';
@@ -33,10 +34,14 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
   const [generation, setGeneration] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+  /** Set when the user asks to see an application we expect not to work. */
+  const [runAnyway, setRunAnyway] = useState(false);
+  const [confirmConvert, setConfirmConvert] = useState(false);
 
   const installed = useSitesStore((s) => s.installed);
   const setPermissions = useSitesStore((s) => s.setPermissions);
   const revalidate = useSitesStore((s) => s.revalidate);
+  const convertToLive = useSitesStore((s) => s.convertToLive);
 
   const manifest = useMemo(
     () => installed.find((candidate) => candidate.id === params?.siteId) ?? null,
@@ -88,6 +93,14 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
   }
 
   const online = manifest.permissions.includes('NETWORK');
+
+  /*
+   * An application that needs a server, with no network permission, will load
+   * its own files and then fail at every request it makes — which looks like a
+   * blank page for no reason. Palm OS knows both facts, so it should say so
+   * rather than let someone watch it break.
+   */
+  const strandedOffline = manifest.networkRequired && !online && !runAnyway;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -163,6 +176,35 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
         />
       ) : null}
 
+      {strandedOffline ? (
+        <NeedsConnection
+          manifest={manifest}
+          onAllowNetwork={() => {
+            void setPermissions(manifest.id, [...manifest.permissions, 'NETWORK']).then(() =>
+              setGeneration((value) => value + 1),
+            );
+          }}
+          onUseAsApp={() => setConfirmConvert(true)}
+          onRunAnyway={() => setRunAnyway(true)}
+        />
+      ) : (
+      <>
+      {manifest.networkRequired ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-warn/25 bg-warn/8 px-3 py-1.5 text-[11.5px] text-warn">
+          <span className="min-w-0 flex-1">
+            This is a downloaded copy of {manifest.primaryHost}, and the part that does the work
+            stays on their servers. Requests go through Palm OS without your cookies, so searching
+            or signing in will not work here.
+          </span>
+          <button
+            type="button"
+            onClick={() => setConfirmConvert(true)}
+            className="shrink-0 rounded-full bg-warn px-2.5 py-0.5 text-[11px] font-medium text-[var(--os-bg)]"
+          >
+            Use it as an app instead
+          </button>
+        </div>
+      ) : null}
       {/*
         A cross-origin frame. `allow-same-origin` preserves the *application's*
         origin — which is not this one — so it keeps its storage and its
@@ -176,6 +218,100 @@ export default function SiteViewerApp({ params }: AppProps<{ siteId?: string }>)
         sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-same-origin"
         className="min-h-0 flex-1 border-0 bg-white"
       />
+      </>
+      )}
+
+      <ConfirmDialog
+        open={confirmConvert}
+        title={`Use ${manifest.name} as an app instead?`}
+        description={`${manifest.primaryHost} will open in its own browser window, where it has your session and works normally. Nothing is downloaded, so it needs a connection.`}
+        confirmLabel="Use as an app"
+        onConfirm={() => {
+          setConfirmConvert(false);
+          void convertToLive(manifest.id).then((live) => {
+            if (live) os.openApp(siteAppId(live.id));
+          });
+        }}
+        onCancel={() => setConfirmConvert(false)}
+      >
+        <p className="text-[12px] leading-relaxed text-ink-2">
+          The downloaded copy is removed. It cannot be made to work — the pages are here, but the
+          server they talk to is not, and no archive can stand in for that. You can download it
+          again later if you want to.
+        </p>
+      </ConfirmDialog>
+    </div>
+  );
+}
+
+/**
+ * Shown instead of an application that cannot work as installed.
+ *
+ * Not a warning bar over a broken page — the page *is* the problem, so it is
+ * replaced by something that says what is wrong and offers the three things
+ * that might help. "Show it anyway" is there because being told no by software
+ * that will not let you look is its own kind of broken.
+ */
+function NeedsConnection({
+  manifest,
+  onAllowNetwork,
+  onUseAsApp,
+  onRunAnyway,
+}: {
+  manifest: AppManifest;
+  onAllowNetwork: () => void;
+  onUseAsApp: () => void;
+  onRunAnyway: () => void;
+}) {
+  const reasons = manifest.diagnostics;
+
+  return (
+    <div className="os-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-lg flex-col items-center gap-4 px-6 py-12 text-center">
+        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-warn/15 text-warn">
+          <Icon name="CloudOff" size={26} />
+        </span>
+        <div>
+          <h2 className="text-[16px] font-semibold text-ink">
+            {manifest.name} needs a live connection
+          </h2>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3">
+            Its files were downloaded and are here. What could not be downloaded is the server they
+            talk to — {manifest.primaryHost} does the actual work, and no archive can stand in for
+            that. Network access is off for this application, so it would load and then fail at
+            every request.
+          </p>
+        </div>
+
+        <Notice tone="neutral" icon="Info" className="w-full text-left">
+          {reasons.websockets.length > 0
+            ? 'It opens a live connection, which only works against the real service. '
+            : ''}
+          {reasons.backendHints.length > 0
+            ? `It calls ${reasons.backendHints.slice(0, 3).join(', ')} on its own server. `
+            : ''}
+          Turning network access on lets it reach that server through Palm OS — but without your
+          cookies, so anything behind a sign-in still will not work.
+        </Notice>
+
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button variant="primary" icon="ExternalLink" onClick={onUseAsApp}>
+            Use it as an app instead
+          </Button>
+          <Button variant="secondary" icon="Wifi" onClick={onAllowNetwork}>
+            Allow network access
+          </Button>
+          <Button variant="ghost" icon="Eye" onClick={onRunAnyway}>
+            Show it anyway
+          </Button>
+        </div>
+
+        <p className="text-[11.5px] leading-relaxed text-ink-3">
+          “Use it as an app” keeps it in your start menu but opens the real site in its own window —
+          where it has your session and works properly. Nothing is downloaded, so it needs a
+          connection.
+        </p>
+      </div>
     </div>
   );
 }

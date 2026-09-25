@@ -13,10 +13,11 @@ about two seconds, with `fake-indexeddb` standing in for browser storage and
 jsdom only where a DOM is genuinely needed.
 
 **End-to-end tests** (`npm run test:e2e`) drive the *production build* in
-headless Firefox — 74 tests across boot, every application launching, window
+headless Firefox and Chromium — 91 tests across boot, every application launching, window
 geometry and the switcher, the shell, the Files app, persistence across reload,
 the first-run tour, Palm Disk, installing web applications, browsing modes,
-migration from the previous architecture, and origin isolation. They run against the real bundle on purpose:
+migration from the previous architecture, origin isolation, the origin's
+content security policy, and recovery from evicted storage. They run against the real bundle on purpose:
 the bugs worth catching at this level — stacking contexts, animation fill
 modes, lazy chunk loading — only appear there.
 
@@ -27,9 +28,19 @@ npx playwright install firefox   # once
 npm run test:e2e       # builds, serves and drives the bundle itself
 ```
 
-Firefox is the end-to-end target because it is the strictest of the three
-engines about the platform features Palm OS leans on, and because the
-capability fallbacks — no File System Access API — only exercise there.
+Firefox is the suite of record: it is the strictest of the three engines about
+the platform features Palm OS leans on, and the capability fallbacks — no File
+System Access API — only exercise there.
+
+Chromium runs too, as its own required job in CI, because it is what most
+people use and the only engine with a real File System Access API. It cannot be
+run in every development environment: a sandbox without access to Playwright's
+browser CDN can only run Firefox locally and relies on CI for the rest.
+
+Its first run was worth the trouble. Of 81 tests, 78 passed immediately; the
+three failures found one real product weakness — a service worker reporting
+itself installed from a cached manifest after its storage had been cleared —
+and two tests that were passing by accident in Firefox. See the bug list below.
 
 CI runs type-check, lint, unit tests and build in one job, and the end-to-end
 suite in another.
@@ -255,11 +266,73 @@ permission is dropped again afterwards, and the resource it could not get is
 named in a PARTIAL archive. The capture path itself was exercised manually
 against the real internet.
 
-**Not verified here either:** long-term survival of an archive across browser
-storage eviction, and a production wildcard-DNS deployment with real
+**Not verified here either:** a production wildcard-DNS deployment with real
 certificates — `*.localhost` exercises the same browser behaviour (distinct
 origin, secure context, per-origin service worker) but not the DNS and TLS
 setup described in DEPLOYMENT.md.
+
+### The Palm OS origin's policy
+`e2e/policy.spec.ts` asserts the Content-Security-Policy is actually sent and
+carries the directives that matter — `script-src 'self'`, no `unsafe-eval`,
+`object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'` — and then
+checks the harder half: that it does not break anything.
+
+A CSP violation logs to the console and fails nothing, so a policy that
+silently blocks a lazy chunk or an object URL looks exactly like one that
+works. The test collects `securitypolicyviolation` events from the page before
+any application code runs, opens five applications chosen for the things CSPs
+usually break — lazy chunks, inline style attributes, object URLs, a
+worker-backed view — and asserts the list is empty. A third test does the same
+while the Browser embeds a site, since `frame-src` has to stay open enough for
+the one thing that application exists to do.
+
+Not applied by the dev server, which injects an inline script for Fast Refresh;
+the tests run against the production build, where it is applied.
+
+### Live web applications
+`e2e/liveapps.spec.ts` covers the third way of running a website: not embedded,
+not archived, but opened in its own top-level window and managed from the
+desktop. It asserts that adding one downloads nothing and is granted nothing,
+that launching it opens the **real origin** as a genuine top-level page rather
+than a frame, that closing that window directly is noticed by the desktop —
+there is no event for it, so the manager polls — that the desktop can close it,
+and that an archive which turns out to need a server offers this as the way out.
+
+Converting is covered too, because the escape hatch is only useful if it is
+reachable from where people actually are. Granting network access used to
+dismiss the panel the way out lived on, leaving a broken page and no next step;
+the offer now sits in the warning strip and is asserted there. A second test
+checks the swap **replaces** the archive rather than adding a second entry of
+the same name.
+
+`src/core/sites/live.test.ts` covers the window manager against a stand-in for
+the cross-origin handle: focusing rather than opening a duplicate, reopening
+once the old window is gone, reporting a blocked pop-up instead of failing
+silently, keeping applications apart, treating a handle that throws as closed,
+and stopping the poll when nothing is open.
+
+### Losing storage
+Browsers evict origin storage under pressure and do not ask first, so
+`e2e/resilience.spec.ts` deletes databases and checks what happens.
+
+Deleting the OS's own database and reloading: the desktop comes up, the
+filesystem is re-seeded, and no console errors are produced. The file created
+beforehand is gone — that is what eviction means, and a test that pretended
+otherwise would be testing nothing.
+
+Deleting an *application's* database and unregistering its worker, which is
+also the exact state a restored backup leaves behind: Palm OS reports "Files
+missing" in the App Store with an explanation, and the "Download again" button
+repairs it from the address in the manifest. A second test asserts the
+application keeps the **same id**, because the id is the origin and the origin
+is where the application keeps its own data — minting a new one to fix a
+missing archive would silently discard whatever the user had saved in it.
+
+`src/core/backup.roundtrip.test.ts` covers the other half against a real
+IndexedDB: an export carries manifests but no archived bytes, a restore brings
+the application list back, a manifest without a `source` is refused because it
+could never be repaired, and a version 1 backup with no application list at all
+still restores.
 
 ### Crash isolation
 A deliberately throwing application was registered, built and launched. It
@@ -381,13 +454,25 @@ Found while porting the browser checks into the repository:
     and focus falls to `<body>` for a moment whenever a button unmounts as the
     step changes. Moved to a window-level listener, as the window switcher
     already does.
-20. **Granting a permission appeared not to work.** Toggling one reloaded the
+20. **An application reported itself installed after its storage was cleared.**
+    The service worker answered the health check from the manifest it holds in
+    memory, so a worker still alive when its origin was evicted kept claiming
+    to be installed while 404ing every request — and Palm OS never offered to
+    repair it. It now checks the entry document is readable from storage.
+    Found by the first Chromium run; invisible in Firefox, where the worker
+    happened to be torn down first.
+21. **Two tests were passing by accident.** The File System Access fallback
+    test relied on the engine not having the API, so it tested nothing in
+    Chromium; and the eviction helper used `deleteDatabase`, which blocks
+    silently while any connection is open, so it could pass by not evicting.
+    Both now arrange the condition explicitly.
+22. **Granting a permission appeared not to work.** Toggling one reloaded the
     application immediately, while the change was still on its way to that
     application's service worker — so it restarted under the old policy and
     the user had to reload again by hand. The reload now waits for the change
     to land. Caught by the end-to-end test asserting a granted permission
     actually takes effect.
-21. **The bridge asked the same question twice, in two vocabularies.** An
+23. **The bridge asked the same question twice, in two vocabularies.** An
     application's `notification` request was routed through the OS's
     *built-in-application* permission system as well as its own, so a request
     the user had already allowed in the application's permission panel was
